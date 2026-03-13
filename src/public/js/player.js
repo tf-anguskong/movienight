@@ -187,10 +187,10 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
       video.currentTime = targetTime;
       if (shouldPlay) {
         video.play().then(() => {
-          hidePlayOverlay();  // autoplay allowed
+          hidePlayOverlay();
           releaseSyncLock();
         }).catch(() => {
-          showPlayOverlay();  // autoplay blocked — show overlay as fallback
+          if (!autoplayOnLoad) showPlayOverlay(); // guests use native controls as fallback
         });
       } else {
         releaseSyncLock();
@@ -218,7 +218,7 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
           hidePlayOverlay();
           releaseSyncLock();
         }).catch(() => {
-          showPlayOverlay();
+          if (!autoplayOnLoad) showPlayOverlay();
         });
       } else {
         releaseSyncLock();
