@@ -18,6 +18,8 @@ let currentKey  = null;
 let hlsInstance = null;
 let isHost      = false;
 
+const autoplayOnLoad = new URLSearchParams(location.search).has('autoplay');
+
 function esc(s = '') {
   const d = document.createElement('div');
   d.appendChild(document.createTextNode(s));
@@ -169,9 +171,9 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
   hidePlayOverlay();
   const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8`;
 
-  // Show overlay immediately if we expect playback — avoids relying on play()
-  // promise rejection which can hang indefinitely in Chrome when buffering.
-  if (shouldPlay) showPlayOverlay();
+  // Show the overlay proactively unless this is a fresh join navigation,
+  // where the browser may allow autoplay and we want seamless playback.
+  if (shouldPlay && !autoplayOnLoad) showPlayOverlay();
 
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
     hlsInstance = new Hls({ startPosition: targetTime, enableWorker: true });
@@ -181,10 +183,10 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
       video.currentTime = targetTime;
       if (shouldPlay) {
         video.play().then(() => {
-          hidePlayOverlay();  // autoplay allowed — no need for overlay
+          hidePlayOverlay();  // autoplay allowed
           releaseSyncLock();
         }).catch(() => {
-          // autoplay blocked — overlay stays, user clicks to play
+          showPlayOverlay();  // autoplay blocked — show overlay as fallback
         });
       } else {
         releaseSyncLock();
@@ -207,7 +209,9 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
         video.play().then(() => {
           hidePlayOverlay();
           releaseSyncLock();
-        }).catch(() => {});
+        }).catch(() => {
+          showPlayOverlay();
+        });
       } else {
         releaseSyncLock();
       }

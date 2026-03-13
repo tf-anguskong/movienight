@@ -63,7 +63,7 @@
           body: JSON.stringify({ name, inviteToken, roomId })
         });
         const data = await res.json();
-        if (data.ok) window.location.href = `/watch/${data.roomId}`;
+        if (data.ok) window.location.href = `/watch/${data.roomId}?autoplay=1`;
         else throw new Error(data.error || 'Failed to join.');
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Join →';
