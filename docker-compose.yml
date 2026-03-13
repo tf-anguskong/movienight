@@ -16,6 +16,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: movienight-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - movienight
+
 volumes:
   sessions:
     driver: local
