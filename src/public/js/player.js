@@ -176,7 +176,11 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
   if (shouldPlay && !autoplayOnLoad) showPlayOverlay();
 
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-    hlsInstance = new Hls({ startPosition: targetTime, enableWorker: true });
+    // startPosition: -1 lets HLS.js read the stream layout before seeking.
+    // Jumping straight to targetTime on a shared mid-session Plex stream causes
+    // buffer append errors due to codec init / segment boundary mismatches.
+    // We seek to targetTime ourselves once the manifest is parsed.
+    hlsInstance = new Hls({ startPosition: -1, enableWorker: true });
     hlsInstance.loadSource(src);
     hlsInstance.attachMedia(video);
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -193,7 +197,11 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
       }
     });
     hlsInstance.on(Hls.Events.ERROR, (_, d) => {
-      if (d.fatal) {
+      if (!d.fatal) return;
+      if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        console.warn('[HLS] Media error, attempting recovery:', d.details);
+        hlsInstance.recoverMediaError();
+      } else {
         console.error('[HLS] Fatal:', d.type, d.details);
         hidePlayOverlay();
         noMovieText.textContent = `Stream error: ${d.details} — try refreshing.`;
