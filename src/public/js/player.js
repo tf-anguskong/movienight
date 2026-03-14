@@ -228,7 +228,9 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
 }
 
 // ── Viewers ────────────────────────────────────────────────
-socket.on('viewers', (viewers) => {
+let lastViewers = [];
+
+function renderViewers(viewers) {
   viewersList.innerHTML = viewers.map(v => `
     <div class="viewer-item">
       ${v.picture
@@ -236,8 +238,34 @@ socket.on('viewers', (viewers) => {
         : `<div class="viewer-avatar-placeholder">${esc(v.name[0]?.toUpperCase() || '?')}</div>`
       }
       <span>${esc(v.name)}${v.isHost ? ' 👑' : ''}${v.isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span>
+      ${isHost && !v.isHost ? `<button class="btn-make-host" data-sid="${esc(v.socketId)}">Make host</button>` : ''}
     </div>
   `).join('');
+
+  if (isHost) {
+    viewersList.querySelectorAll('.btn-make-host').forEach(btn => {
+      btn.addEventListener('click', () => socket.emit('transfer-host', { targetSocketId: btn.dataset.sid }));
+    });
+  }
+}
+
+socket.on('viewers', (viewers) => {
+  lastViewers = viewers;
+  renderViewers(viewers);
+});
+
+socket.on('became-host', ({ inviteToken }) => {
+  isHost = true;
+  document.getElementById('choose-movie-btn').style.display = 'block';
+  setupInviteLink(inviteToken);
+  renderViewers(lastViewers);
+});
+
+socket.on('lost-host', () => {
+  isHost = false;
+  document.getElementById('choose-movie-btn').style.display = 'none';
+  document.getElementById('invite-section').style.display = 'none';
+  renderViewers(lastViewers);
 });
 
 // ── Playback → server ──────────────────────────────────────

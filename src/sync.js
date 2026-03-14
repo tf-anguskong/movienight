@@ -13,6 +13,7 @@ class Room {
     this.hostId       = hostId;
     this.hostName     = hostName;
     this.hostPicture  = hostPicture || null;
+    this.hostIsGuest  = false;
     this.hostSocketId = null;
     this.movieKey     = null;
     this.movieTitle   = null;
@@ -92,7 +93,7 @@ function setupSync(io) {
       const room = new Room({ hostId: user.id, hostName: user.displayName || user.name, hostPicture: user.picture, name });
       room.hostSocketId = socket.id;
       room.viewers.set(socket.id, {
-        id: user.id, name: user.displayName || user.name, picture: user.picture || null, isGuest: false, isHost: true
+        socketId: socket.id, id: user.id, name: user.displayName || user.name, picture: user.picture || null, isGuest: false, isHost: true
       });
 
       rooms.set(room.id, room);
@@ -110,9 +111,9 @@ function setupSync(io) {
       const room = rooms.get(roomId);
       if (!room) return socket.emit('room-error', 'Room not found');
 
-      const isHost          = !user.isGuest && user.id === room.hostId;
+      const isHost          = !room.hostIsGuest && !user.isGuest && user.id === room.hostId;
       const hasValidInvite  = user.isGuest && user.inviteToken === room.inviteToken;
-      const isPlexViewer    = !user.isGuest && user.id !== room.hostId;
+      const isPlexViewer    = !user.isGuest && !isHost;
       // Plex users can join any room (they browse via lobby anyway)
 
       if (!isHost && !hasValidInvite && !isPlexViewer) {
@@ -130,7 +131,7 @@ function setupSync(io) {
       }
 
       room.viewers.set(socket.id, {
-        id: user.id, name: user.displayName || user.name, picture: user.picture || null,
+        socketId: socket.id, id: user.id, name: user.displayName || user.name, picture: user.picture || null,
         isGuest: user.isGuest || false, isHost
       });
       socketToRoom.set(socket.id, room);
@@ -143,7 +144,7 @@ function setupSync(io) {
     // ── Select movie (host only) ───────────────────────────
     socket.on('select-movie', ({ movieKey, movieTitle, partId }) => {
       const room = socketToRoom.get(socket.id);
-      if (!room || room.hostId !== user.id) return;
+      if (!room || room.hostSocketId !== socket.id) return;
       clearRoomManifest(room.id); // Evict cached manifest so next request starts fresh
       room.movieKey = movieKey; room.movieTitle = movieTitle; room.partId = partId;
       room.playing = false; room.position = 0; room.lastUpdate = Date.now();
@@ -176,6 +177,34 @@ function setupSync(io) {
       room.broadcastState(io);
     });
 
+    // ── Transfer host ──────────────────────────────────────
+    socket.on('transfer-host', ({ targetSocketId }) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.hostSocketId !== socket.id) return;
+      if (!room.viewers.has(targetSocketId)) return;
+
+      const oldHostViewer = room.viewers.get(socket.id);
+      const newHostViewer = room.viewers.get(targetSocketId);
+
+      if (oldHostViewer) oldHostViewer.isHost = false;
+      newHostViewer.isHost = true;
+
+      room.hostId       = newHostViewer.isGuest ? null : newHostViewer.id;
+      room.hostName     = newHostViewer.name;
+      room.hostPicture  = newHostViewer.picture;
+      room.hostIsGuest  = newHostViewer.isGuest;
+      room.hostSocketId = targetSocketId;
+
+      if (room.closeTimer) { clearTimeout(room.closeTimer); room.closeTimer = null; }
+
+      io.to(socket.id).emit('lost-host');
+      io.to(targetSocketId).emit('became-host', { inviteToken: room.inviteToken });
+
+      room.broadcastViewers(io);
+      broadcastRoomList(io);
+      console.log(`[Room] Host transferred from "${user.name}" to "${newHostViewer.name}" in "${room.name}"`);
+    });
+
     // ── Disconnect ─────────────────────────────────────────
     socket.on('disconnect', () => {
       const room = socketToRoom.get(socket.id);
@@ -184,18 +213,27 @@ function setupSync(io) {
 
       room.viewers.delete(socket.id);
 
-      if (room.hostId === user.id) {
-        // Give the host a grace window to reconnect (e.g. lobby → watch navigation).
-        // If they rejoin before the timer fires it will be cancelled.
-        console.log(`[Room] Host "${user.name}" disconnected from "${room.name}" — waiting to see if they reconnect…`);
-        room.closeTimer = setTimeout(() => {
-          if (!rooms.has(room.id)) return; // already cleaned up
-          console.log(`[Room] "${room.name}" closed — host did not reconnect`);
+      if (room.hostSocketId === socket.id) {
+        if (room.hostIsGuest) {
+          // Guest hosts cannot reconnect — close the room immediately
+          console.log(`[Room] Guest host "${user.name}" disconnected from "${room.name}" — closing`);
           room.broadcast(io, 'room-closed', { reason: 'Host left the room' });
           inviteTokens.delete(room.inviteToken);
           rooms.delete(room.id);
           broadcastRoomList(io);
-        }, 30000);
+        } else {
+          // Give the Plex host a grace window to reconnect (e.g. lobby → watch navigation).
+          // If they rejoin before the timer fires it will be cancelled.
+          console.log(`[Room] Host "${user.name}" disconnected from "${room.name}" — waiting to see if they reconnect…`);
+          room.closeTimer = setTimeout(() => {
+            if (!rooms.has(room.id)) return; // already cleaned up
+            console.log(`[Room] "${room.name}" closed — host did not reconnect`);
+            room.broadcast(io, 'room-closed', { reason: 'Host left the room' });
+            inviteTokens.delete(room.inviteToken);
+            rooms.delete(room.id);
+            broadcastRoomList(io);
+          }, 30000);
+        }
       } else {
         room.broadcastViewers(io);
         console.log(`[Room] ${user.name} left "${room.name}"`);

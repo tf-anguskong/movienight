@@ -443,6 +443,8 @@ body {
 .viewers-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
 .viewer-item { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; }
+.btn-make-host { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.btn-make-host:hover { border-color: var(--accent); color: var(--accent); }
 .viewer-item img, .viewer-avatar-placeholder { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; }
 .viewer-avatar-placeholder {
   background: var(--accent); display: flex; align-items: center; justify-content: center;
