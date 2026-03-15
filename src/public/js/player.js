@@ -909,7 +909,7 @@ function stopCountdownAnim() {
 
 socket.on('countdown', ({ endsAt }) => {
   countdownOverlay.style.display = 'flex';
-  if (isHost) cancelCountdownBtn.style.display = 'block';
+  if (isHost) cancelCountdownBtn.style.display = 'inline-flex';
   startCountdownAnim(endsAt);
 });
 

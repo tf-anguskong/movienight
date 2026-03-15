@@ -31,14 +31,13 @@
       <div id="countdown-section" style="display:none">
         <h4 class="section-heading">⏱ Countdown</h4>
         <div class="countdown-presets">
-          <button class="btn-countdown-preset" data-secs="3">3s</button>
+          <button id="cancel-countdown-btn" class="btn-countdown-preset btn-countdown-stop" style="display:none">■</button>
           <button class="btn-countdown-preset" data-secs="5">5s</button>
           <button class="btn-countdown-preset" data-secs="10">10s</button>
           <input type="number" id="countdown-custom" class="countdown-custom-input" min="1" max="99" placeholder="#">
           <button id="countdown-custom-btn" class="btn-countdown-preset btn-countdown-go">▶</button>
         </div>
       </div>
-      <button id="cancel-countdown-btn" class="btn-cancel-countdown" style="display:none">✕ Cancel countdown</button>
 
       <!-- Room controls (host only) -->
       <div id="room-controls-section" style="display:none">
