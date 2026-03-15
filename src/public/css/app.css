@@ -467,6 +467,25 @@ body {
 .viewers-section { flex-shrink: 0; }
 .viewers-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 160px; overflow-y: auto; }
 
+/* Room controls */
+.room-control-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.83rem; padding: 0.35rem 0; color: var(--text-muted);
+}
+.toggle-switch { position: relative; display: inline-block; width: 34px; height: 19px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: var(--border); border-radius: 19px; transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute;
+  width: 13px; height: 13px; left: 3px; bottom: 3px;
+  background: var(--text-muted); border-radius: 50%; transition: transform 0.2s, background 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(15px); background: #000; }
+
 /* Chat */
 .chat-section { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .chat-messages { flex: 1; min-height: 60px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; }
@@ -482,6 +501,8 @@ body {
 .viewer-item { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; }
 .btn-make-host { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .btn-make-host:hover { border-color: var(--accent); color: var(--accent); }
+.btn-kick { margin-left: 0.25rem; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid rgba(220,60,60,0.35); color: #c05050; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.btn-kick:hover { border-color: #e05050; color: #e05050; background: rgba(220,60,60,0.1); }
 .viewer-item img, .viewer-avatar-placeholder { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; }
 .viewer-avatar-placeholder {
   background: var(--accent); display: flex; align-items: center; justify-content: center;

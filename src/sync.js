@@ -16,6 +16,7 @@ class Room {
     this.hostIsGuest  = false;
     this.hostSocketId = null;
     this.countdownTimer = null;
+    this.settings     = { playbackLocked: false, reactionsEnabled: true };
     this.movieKey     = null;
     this.movieTitle   = null;
     this.partId       = null;
@@ -37,7 +38,8 @@ class Room {
       movieKey: this.movieKey, movieTitle: this.movieTitle, partId: this.partId,
       playing: this.playing,
       position: this.currentPosition(),
-      lastUpdate: Date.now()
+      lastUpdate: Date.now(),
+      settings: this.settings
     };
   }
 
@@ -154,10 +156,11 @@ function setupSync(io) {
       broadcastRoomList(io);
     });
 
-    // ── Playback (anyone in room) ──────────────────────────
+    // ── Playback (anyone in room, unless locked) ───────────
     socket.on('play', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
       room.position = position ?? room.currentPosition();
       room.playing = true; room.lastUpdate = Date.now();
       room.broadcastState(io);
@@ -172,6 +175,7 @@ function setupSync(io) {
     socket.on('pause', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
       room.position = position ?? room.currentPosition();
       room.playing = false; room.lastUpdate = Date.now();
       room.broadcastState(io);
@@ -186,6 +190,7 @@ function setupSync(io) {
     socket.on('seek', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
       room.position = position; room.lastUpdate = Date.now();
       room.broadcastState(io);
     });
@@ -211,9 +216,33 @@ function setupSync(io) {
     socket.on('reaction', ({ emoji }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!room.settings.reactionsEnabled) return;
       const allowed = ['👍','❤️','😂','😱','😮','👏'];
       if (!allowed.includes(emoji)) return;
       room.broadcast(io, 'reaction', { emoji, name: user.displayName || user.name });
+    });
+
+    // ── Room settings (host only) ──────────────────────────
+    socket.on('update-settings', (s) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.hostSocketId !== socket.id) return;
+      if (typeof s.playbackLocked  === 'boolean') room.settings.playbackLocked  = s.playbackLocked;
+      if (typeof s.reactionsEnabled === 'boolean') room.settings.reactionsEnabled = s.reactionsEnabled;
+      room.broadcast(io, 'room-settings', room.settings);
+    });
+
+    // ── Kick viewer (host only) ────────────────────────────
+    socket.on('kick-viewer', ({ targetSocketId }) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.hostSocketId !== socket.id) return;
+      if (!room.viewers.has(targetSocketId)) return;
+      if (targetSocketId === socket.id) return;
+      const kicked = room.viewers.get(targetSocketId);
+      io.to(targetSocketId).emit('kicked');
+      room.viewers.delete(targetSocketId);
+      socketToRoom.delete(targetSocketId);
+      room.broadcastViewers(io);
+      console.log(`[Room] ${user.name} kicked "${kicked?.name}" from "${room.name}"`);
     });
 
     // ── Countdown (host only) ──────────────────────────────

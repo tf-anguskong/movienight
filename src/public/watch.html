@@ -16,6 +16,25 @@
       <button id="countdown-btn" class="btn-countdown" style="display:none">⏱ Start in 10s</button>
       <button id="cancel-countdown-btn" class="btn-cancel-countdown" style="display:none">✕ Cancel countdown</button>
 
+      <!-- Room controls (host only) -->
+      <div id="room-controls-section" style="display:none">
+        <h4 class="section-heading">Room Controls</h4>
+        <div class="room-control-row">
+          <span>Lock playback</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-lock-playback">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="room-control-row">
+          <span>Reactions</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-reactions" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
       <!-- Invite link (host only) -->
       <div id="invite-section" style="display:none">
         <h4 class="section-heading">Invite Link</h4>

@@ -12,11 +12,12 @@ const viewersList = document.getElementById('viewers-list');
 const syncDot     = document.getElementById('sync-dot');
 const syncText    = document.getElementById('sync-text');
 
-let isSyncing   = false;
-let syncTimer   = null;
-let currentKey  = null;
-let hlsInstance = null;
-let isHost      = false;
+let isSyncing    = false;
+let syncTimer    = null;
+let currentKey   = null;
+let hlsInstance  = null;
+let isHost       = false;
+let roomSettings = { playbackLocked: false, reactionsEnabled: true };
 
 const autoplayOnLoad = new URLSearchParams(location.search).has('autoplay');
 
@@ -30,17 +31,38 @@ function esc(s = '') {
 socket.on('connect', () => socket.emit('join-room', { roomId }));
 
 function setHostUI(on, inviteToken) {
-  document.getElementById('choose-movie-btn').style.display = on ? 'block' : 'none';
-  document.getElementById('countdown-btn').style.display    = on ? 'block' : 'none';
+  document.getElementById('choose-movie-btn').style.display       = on ? 'block' : 'none';
+  document.getElementById('countdown-btn').style.display          = on ? 'block' : 'none';
+  document.getElementById('room-controls-section').style.display  = on ? 'block' : 'none';
   if (on && inviteToken) setupInviteLink(inviteToken);
   if (!on) document.getElementById('invite-section').style.display = 'none';
+}
+
+function applyRoomSettings(settings) {
+  roomSettings = { ...roomSettings, ...settings };
+  video.controls = !roomSettings.playbackLocked || isHost;
+  document.getElementById('reaction-bar').style.display = roomSettings.reactionsEnabled ? '' : 'none';
+  if (isHost) {
+    const lockEl = document.getElementById('toggle-lock-playback');
+    const reactEl = document.getElementById('toggle-reactions');
+    if (lockEl) lockEl.checked = !!roomSettings.playbackLocked;
+    if (reactEl) reactEl.checked = !!roomSettings.reactionsEnabled;
+  }
 }
 
 socket.on('room-state', (state) => {
   isHost = state.isHost;
   roomNameEl.textContent = state.name || '';
   setHostUI(isHost, state.inviteToken);
+  if (state.settings) applyRoomSettings(state.settings);
   applyState(state);
+});
+
+socket.on('room-settings', applyRoomSettings);
+
+socket.on('kicked', () => {
+  alert('You have been removed from this room by the host.');
+  window.location.href = '/';
 });
 
 socket.on('state', applyState);
@@ -240,13 +262,23 @@ function renderViewers(viewers) {
         : `<div class="viewer-avatar-placeholder">${esc(v.name[0]?.toUpperCase() || '?')}</div>`
       }
       <span>${esc(v.name)}${v.isHost ? ' 👑' : ''}${v.isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span>
-      ${isHost && !v.isHost ? `<button class="btn-make-host" data-sid="${esc(v.socketId)}">Make host</button>` : ''}
+      ${isHost && !v.isHost ? `
+        <button class="btn-make-host" data-sid="${esc(v.socketId)}">Host</button>
+        <button class="btn-kick" data-sid="${esc(v.socketId)}">Kick</button>
+      ` : ''}
     </div>
   `).join('');
 
   if (isHost) {
     viewersList.querySelectorAll('.btn-make-host').forEach(btn => {
       btn.addEventListener('click', () => socket.emit('transfer-host', { targetSocketId: btn.dataset.sid }));
+    });
+    viewersList.querySelectorAll('.btn-kick').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (confirm('Kick this viewer from the room?')) {
+          socket.emit('kick-viewer', { targetSocketId: btn.dataset.sid });
+        }
+      });
     });
   }
 }
@@ -269,9 +301,24 @@ socket.on('lost-host', () => {
 });
 
 // ── Playback → server ──────────────────────────────────────
-video.addEventListener('play',   () => { if (!isSyncing) socket.emit('play',  { position: video.currentTime }); });
-video.addEventListener('pause',  () => { if (!isSyncing) socket.emit('pause', { position: video.currentTime }); });
-video.addEventListener('seeked', () => { if (!isSyncing) socket.emit('seek',  { position: video.currentTime }); });
+video.addEventListener('play', () => {
+  if (isSyncing) return;
+  if (roomSettings.playbackLocked && !isHost) {
+    // Immediately revert — don't let the video run while server-state says paused
+    isSyncing = true; video.pause(); releaseSyncLock(); return;
+  }
+  socket.emit('play', { position: video.currentTime });
+});
+video.addEventListener('pause',  () => {
+  if (isSyncing) return;
+  if (roomSettings.playbackLocked && !isHost) return;
+  socket.emit('pause', { position: video.currentTime });
+});
+video.addEventListener('seeked', () => {
+  if (isSyncing) return;
+  if (roomSettings.playbackLocked && !isHost) return;
+  socket.emit('seek',  { position: video.currentTime });
+});
 
 // ── Movie browser modal (host only) ───────────────────────
 document.getElementById('choose-movie-btn').addEventListener('click', () => {
@@ -557,3 +604,13 @@ socket.on('countdown-cancelled', stopCountdownAnim);
 
 countdownBtn.addEventListener('click', () => socket.emit('start-countdown'));
 cancelCountdownBtn.addEventListener('click', () => socket.emit('cancel-countdown'));
+
+// ── Room settings toggles (host only) ──────────────────────
+function emitSettings() {
+  socket.emit('update-settings', {
+    playbackLocked:  document.getElementById('toggle-lock-playback').checked,
+    reactionsEnabled: document.getElementById('toggle-reactions').checked
+  });
+}
+document.getElementById('toggle-lock-playback').addEventListener('change', emitSettings);
+document.getElementById('toggle-reactions').addEventListener('change', emitSettings);
