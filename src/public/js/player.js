@@ -248,13 +248,15 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
         console.warn('[HLS] Media error, attempting recovery:', d.details);
         hlsInstance.recoverMediaError();
       } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
-        // Network error — Plex session may have expired. Reload the source once;
-        // the server will start a fresh transcode session if needed.
+        // Network error — Plex session likely expired. Bust the server-side
+        // manifest cache and restart from the current playback position so
+        // Plex transcodes from roughly the right spot.
         networkRetried = true;
-        console.warn('[HLS] Network error, reloading source:', d.details);
+        console.warn('[HLS] Network error, busting manifest and restarting:', d.details);
         setTimeout(() => {
           if (hlsInstance) {
-            hlsInstance.loadSource(src);
+            const offsetMs = Math.floor((video.currentTime || 0) * 1000);
+            hlsInstance.loadSource(`${src}?bust=1&offset=${offsetMs}`);
             hlsInstance.startLoad();
           }
         }, 2000);

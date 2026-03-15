@@ -14,7 +14,7 @@ const CLIENT_ID = process.env.PLEX_CLIENT_ID || 'movienight-app';
 // Plex call rather than racing to start.m3u8 simultaneously.
 const manifestCache   = new Map(); // cacheKey → manifest string
 const manifestPending = new Map(); // cacheKey → Promise<string>
-const activeSessions  = new Map(); // cacheKey → sessionId
+const activeSessions  = new Map(); // cacheKey → { sessionId, ratingKey }
 
 function clearRoomManifest(roomId) {
   for (const key of manifestCache.keys()) {
@@ -28,22 +28,28 @@ function clearRoomManifest(roomId) {
   }
 }
 
-// Plex terminates transcode sessions that don't receive segment requests or
-// a ping within ~10 minutes. Ping all active sessions every 4 minutes so
-// the server-side Plex session stays alive regardless of client buffer state.
+// Keep Plex transcode sessions alive via the /:/timeline endpoint (supported
+// by all Plex versions). Called every 4 minutes to prevent the ~10-minute
+// inactivity timeout regardless of whether HLS.js is actively buffering.
 setInterval(async () => {
-  for (const [, sessionId] of activeSessions) {
+  for (const [, { sessionId, ratingKey }] of activeSessions) {
     try {
-      await axios.get(`${PLEX_URL}/video/:/transcode/universal/ping`, {
+      await axios.get(`${PLEX_URL}/:/timeline`, {
         params: {
           'X-Plex-Token': PLEX_TOKEN,
           'X-Plex-Client-Identifier': CLIENT_ID,
-          'X-Plex-Session-Identifier': sessionId
+          'X-Plex-Session-Identifier': sessionId,
+          ratingKey,
+          key: `/library/metadata/${ratingKey}`,
+          state: 'playing',
+          time: 0,
+          duration: 0
         },
         timeout: 5000
       });
+      console.log(`[HLS] Timeline heartbeat sent (${sessionId})`);
     } catch (err) {
-      console.warn(`[HLS] Session ping failed (${sessionId}):`, err.message);
+      console.warn(`[HLS] Timeline heartbeat failed (${sessionId}):`, err.message);
     }
   }
 }, 4 * 60 * 1000);
@@ -95,6 +101,18 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   const sessionId = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey}`;
   const cacheKey  = `${roomId}-${ratingKey}`;
 
+  // ?bust=1 signals that the client detected a broken stream and needs a fresh
+  // Plex session. Evict the stale manifest so we start over below.
+  // ?offset=<ms> tells Plex where to begin transcoding so the client can seek
+  // straight to the current playback position after reconnecting.
+  const bust     = !!req.query.bust;
+  const offsetMs = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  if (bust) {
+    manifestCache.delete(cacheKey);
+    activeSessions.delete(cacheKey);
+    console.log(`[HLS] Cache busted for ${cacheKey} — starting fresh session at offset ${offsetMs}ms`);
+  }
+
   res.setHeader('Content-Type', 'application/x-mpegURL');
   res.setHeader('Cache-Control', 'no-cache');
 
@@ -135,7 +153,8 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       copyts: '1',
       mediaIndex: '0',
       partIndex: '0',
-      fastSeek: '1'
+      fastSeek: '1',
+      ...(offsetMs > 0 ? { offset: offsetMs } : {})
     };
 
     // Build query string manually — axios encodes '/' as '%2F' in param values,
@@ -168,7 +187,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   try {
     const manifest = await promise;
     manifestCache.set(cacheKey, manifest);
-    activeSessions.set(cacheKey, sessionId);
+    activeSessions.set(cacheKey, { sessionId, ratingKey });
     manifestPending.delete(cacheKey);
     res.send(manifest);
   } catch (err) {
