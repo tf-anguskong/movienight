@@ -21,6 +21,7 @@ let roomType         = 'movie';
 let roomSettings     = { playbackLocked: false, reactionsEnabled: true };
 let sidebarCollapsed = false;
 let unreadChats      = 0;
+let lastKnownState   = null;
 
 // ── YouTube state ──────────────────────────────────────────
 let ytApiLoaded   = false;
@@ -120,6 +121,7 @@ function releaseSyncLock() {
 
 // ── Apply server state ─────────────────────────────────────
 function applyState(state) {
+  lastKnownState = state;
   if (state.roomType === 'youtube') {
     video.style.display = 'none';
     applyYtState(state);
@@ -196,8 +198,16 @@ function hidePlayOverlay() {
 
 // Make the entire overlay clickable — the native video spinner can intercept
 // clicks on the button specifically, so we catch clicks on the whole overlay.
+// Re-sync to current authoritative position so guests who clicked late don't
+// start from where the manifest was loaded rather than where the movie is now.
 document.getElementById('play-overlay')?.addEventListener('click', () => {
   hidePlayOverlay();
+  if (lastKnownState && lastKnownState.playing) {
+    const elapsed   = (Date.now() - lastKnownState.lastUpdate) / 1000;
+    const catchUpTo = lastKnownState.position + elapsed;
+    isSyncing = true;
+    video.currentTime = catchUpTo;
+  }
   video.play().catch(console.warn);
   releaseSyncLock();
 });
@@ -321,6 +331,23 @@ function showNotif(text) {
     el.addEventListener('animationend', () => el.remove(), { once: true });
   }, 4000);
 }
+
+// ── Position reporting (for drift indicator) ───────────────
+setInterval(() => {
+  let pos = null;
+  if (roomType === 'movie' && currentKey && !video.paused && !video.ended) {
+    pos = video.currentTime;
+  } else if (roomType === 'youtube' && ytPlayer && ytVideoId) {
+    if (ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING) {
+      pos = ytPlayer.getCurrentTime?.();
+    }
+  }
+  if (pos != null && isFinite(pos)) socket.emit('position-report', { position: pos });
+}, 2000);
+
+// ── Buffering state reporting ──────────────────────────────
+video.addEventListener('waiting', () => socket.emit('buffering-state', { buffering: true }));
+video.addEventListener('playing', () => socket.emit('buffering-state', { buffering: false }));
 
 // ── YouTube IFrame API ─────────────────────────────────────
 function loadYouTubeApi() {
@@ -483,19 +510,31 @@ function setYoutubeUrl() {
 let lastViewers = [];
 
 function renderViewers(viewers) {
-  viewersList.innerHTML = viewers.map(v => `
-    <div class="viewer-item">
-      ${v.picture
-        ? `<img src="${v.picture}" alt="${esc(v.name)}">`
-        : `<div class="viewer-avatar-placeholder">${esc(v.name[0]?.toUpperCase() || '?')}</div>`
-      }
-      <span>${esc(v.name)}${v.isHost ? ' 👑' : ''}${v.isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span>
-      ${isHost && !v.isHost ? `
-        <button class="btn-make-host" data-sid="${esc(v.socketId)}">Host</button>
-        <button class="btn-kick" data-sid="${esc(v.socketId)}">Kick</button>
-      ` : ''}
-    </div>
-  `).join('');
+  viewersList.innerHTML = viewers.map(v => {
+    const driftHtml = v.drift != null
+      ? (() => {
+          const abs = Math.abs(v.drift);
+          const cls = abs < 1 ? 'drift-ok' : abs < 3 ? 'drift-warn' : 'drift-bad';
+          const sign = v.drift > 0 ? '+' : '';
+          return `<span class="drift-badge ${cls}">${sign}${v.drift.toFixed(1)}s</span>`;
+        })()
+      : '';
+    const bufHtml = v.buffering ? '<span class="buffering-dot" title="Buffering…"></span>' : '';
+    return `
+      <div class="viewer-item">
+        ${v.picture
+          ? `<img src="${v.picture}" alt="${esc(v.name)}">`
+          : `<div class="viewer-avatar-placeholder">${esc(v.name[0]?.toUpperCase() || '?')}</div>`
+        }
+        <span class="viewer-name-wrap">${esc(v.name)}${v.isHost ? ' 👑' : ''}${v.isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span>
+        ${bufHtml}${driftHtml}
+        ${isHost && !v.isHost ? `
+          <button class="btn-make-host" data-sid="${esc(v.socketId)}">Host</button>
+          <button class="btn-kick" data-sid="${esc(v.socketId)}">Kick</button>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
 
   if (isHost) {
     viewersList.querySelectorAll('.btn-make-host').forEach(btn => {

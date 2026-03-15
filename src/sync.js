@@ -87,7 +87,17 @@ class Room {
   }
 
   broadcastViewers(io) {
-    this.broadcast(io, 'viewers', Array.from(this.viewers.values()));
+    const now        = Date.now();
+    const currentPos = this.playing ? this.currentPosition() : null;
+    const viewers = Array.from(this.viewers.values()).map(v => {
+      let drift = null;
+      if (currentPos !== null && v.reportedTime != null && v.reportedAt != null) {
+        const estimated = v.reportedTime + (now - v.reportedAt) / 1000;
+        drift = Math.round((estimated - currentPos) * 10) / 10;
+      }
+      return { ...v, drift, buffering: v.buffering || false };
+    });
+    this.broadcast(io, 'viewers', viewers);
   }
 
   broadcastState(io) {
@@ -130,7 +140,10 @@ function setupSync(io) {
   // without waiting for a play/pause/seek event to trigger a state broadcast.
   setInterval(() => {
     rooms.forEach(room => {
-      if (room.playing && room.viewers.size > 1) room.broadcastState(io);
+      if (room.playing && room.viewers.size > 1) {
+        room.broadcastState(io);
+        room.broadcastViewers(io);
+      }
     });
   }, 5000);
 
@@ -377,6 +390,27 @@ function setupSync(io) {
       room.broadcastViewers(io);
       broadcastRoomList(io);
       console.log(`[Room] Host transferred from "${user.name}" to "${newHostViewer.name}" in "${room.name}"`);
+    });
+
+    // ── Position report (for drift display) ───────────────
+    socket.on('position-report', ({ position }) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room) return;
+      const viewer = room.viewers.get(socket.id);
+      if (!viewer) return;
+      if (typeof position !== 'number' || !isFinite(position) || position < 0) return;
+      viewer.reportedTime = position;
+      viewer.reportedAt   = Date.now();
+    });
+
+    // ── Buffering state ────────────────────────────────────
+    socket.on('buffering-state', ({ buffering }) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room) return;
+      const viewer = room.viewers.get(socket.id);
+      if (!viewer) return;
+      viewer.buffering = !!buffering;
+      room.broadcastViewers(io);
     });
 
     // ── Disconnect ─────────────────────────────────────────

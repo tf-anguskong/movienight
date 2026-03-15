@@ -599,7 +599,14 @@ body {
 .btn-chat-send:hover { background: var(--accent-h); }
 
 .viewer-item { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; }
-.btn-make-host { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.viewer-name-wrap { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drift-badge { font-size: 0.67rem; padding: 0.1rem 0.3rem; border-radius: 3px; flex-shrink: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drift-ok   { background: rgba(80,200,80,0.15);  color: #6dde6d; }
+.drift-warn { background: rgba(220,180,60,0.15); color: #d4aa40; }
+.drift-bad  { background: rgba(220,60,60,0.15);  color: #e05555; }
+.buffering-dot { width: 10px; height: 10px; border: 2px solid rgba(180,180,180,0.5); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-make-host { margin-left: 0.25rem; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .btn-make-host:hover { border-color: var(--accent); color: var(--accent); }
 .btn-kick { margin-left: 0.25rem; font-size: 0.7rem; padding: 0.1rem 0.45rem; background: transparent; border: 1px solid rgba(220,60,60,0.35); color: #c05050; border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .btn-kick:hover { border-color: #e05050; color: #e05050; background: rgba(220,60,60,0.1); }
