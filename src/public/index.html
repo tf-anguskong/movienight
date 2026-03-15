@@ -74,6 +74,16 @@
       <h3>Schedule a Room</h3>
       <input type="text" id="sched-name" class="search-input" placeholder="Room name" maxlength="60" style="width:100%;margin-bottom:0.75rem">
       <div class="sched-field-group">
+        <label class="sched-label">Movie</label>
+        <div class="sidebar-input-row">
+          <input type="text" id="sched-movie-display" class="sidebar-text-input" placeholder="No movie selected" readonly>
+          <button id="sched-movie-clear" class="btn-sidebar-action" type="button" style="display:none;background:var(--bg-card);color:var(--text-muted);border:1px solid var(--border)">✕</button>
+          <button id="sched-movie-btn" class="btn-sidebar-action" type="button">Browse</button>
+        </div>
+        <input type="hidden" id="sched-movie-key">
+        <input type="hidden" id="sched-movie-partid">
+      </div>
+      <div class="sched-field-group">
         <label class="sched-label">Date &amp; Time</label>
         <input type="datetime-local" id="sched-datetime" class="search-input" style="width:100%">
       </div>
@@ -86,6 +96,29 @@
         <button id="sched-cancel" class="btn-logout">Cancel</button>
         <button id="sched-confirm" class="btn-create">Schedule</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Schedule movie browser modal -->
+  <div id="sched-movie-modal" class="modal-overlay" style="display:none">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>Choose a Movie</h3>
+        <button id="close-sched-movie-modal" class="modal-close">✕</button>
+      </div>
+      <div class="browser-toolbar" style="margin-bottom:1rem;flex-shrink:0">
+        <div class="toolbar-filters">
+          <input type="text" id="sched-search-input" class="search-input" placeholder="Search…" autocomplete="off">
+          <select id="sched-genre-select" class="filter-select"><option value="">All genres</option></select>
+          <select id="sched-sort-select" class="filter-select">
+            <option value="title">Title</option>
+            <option value="year">Newest</option>
+            <option value="rating">Rating</option>
+          </select>
+        </div>
+        <span id="sched-movie-count" class="movie-count"></span>
+      </div>
+      <div id="sched-movies-grid" class="movies-grid modal-grid"></div>
     </div>
   </div>
 

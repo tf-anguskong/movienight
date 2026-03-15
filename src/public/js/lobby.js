@@ -194,9 +194,7 @@ function populateTimezones() {
 }
 
 function openScheduleModal() {
-  // Set minimum datetime to now (local time)
   const now = new Date();
-  // datetime-local needs format "YYYY-MM-DDTHH:MM"
   const pad = n => String(n).padStart(2, '0');
   const localMin = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate())
     + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
@@ -205,10 +203,111 @@ function openScheduleModal() {
   dt.value = '';
 
   document.getElementById('sched-name').value = '';
+  document.getElementById('sched-movie-display').value = '';
+  document.getElementById('sched-movie-key').value = '';
+  document.getElementById('sched-movie-partid').value = '';
+  document.getElementById('sched-movie-clear').style.display = 'none';
   document.getElementById('sched-error').style.display = 'none';
   document.getElementById('schedule-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('sched-name').focus(), 50);
 }
+
+// ── Schedule movie browser ──────────────────────────────────
+let schedMovieSearchTimeout = null;
+
+async function loadSchedMovies() {
+  const grid   = document.getElementById('sched-movies-grid');
+  const search = document.getElementById('sched-search-input').value.trim();
+  const genre  = document.getElementById('sched-genre-select').value;
+  const sort   = document.getElementById('sched-sort-select').value;
+
+  grid.innerHTML = '<div class="loading">Loading movies…</div>';
+
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (genre)  params.set('genre', genre);
+  if (sort)   params.set('sort', sort);
+
+  try {
+    const { movies, genres, error } = await fetch(`/api/movies?${params}`).then(r => r.json());
+    if (error) throw new Error(error);
+
+    const genreSelect = document.getElementById('sched-genre-select');
+    const currentGenre = genreSelect.value;
+    if (genres?.length) {
+      genreSelect.innerHTML = '<option value="">All genres</option>' +
+        genres.map(g => `<option value="${esc(g)}"${g === currentGenre ? ' selected' : ''}>${esc(g)}</option>`).join('');
+    }
+
+    document.getElementById('sched-movie-count').textContent =
+      movies.length ? `${movies.length} movie${movies.length !== 1 ? 's' : ''}` : '';
+
+    if (!movies.length) {
+      grid.innerHTML = '<div class="loading">No movies found.</div>';
+      return;
+    }
+
+    grid.innerHTML = movies.map(m => `
+      <div class="movie-card" data-key="${esc(m.ratingKey)}" data-title="${esc(m.title)}">
+        ${m.thumb
+          ? `<img class="movie-poster" src="${esc(m.thumb)}" alt="${esc(m.title)}" loading="lazy">`
+          : `<div class="movie-poster-placeholder">🎬</div>`}
+        <div class="movie-info">
+          <h3 title="${esc(m.title)}">${esc(m.title)}</h3>
+          <span>${m.year || ''}${m.year && m.rating ? ' · ' : ''}${m.rating ? '★ ' + Number(m.rating).toFixed(1) : ''}</span>
+        </div>
+      </div>
+    `).join('');
+
+    grid.querySelectorAll('.movie-card').forEach(card => {
+      card.addEventListener('click', () => selectSchedMovie(card.dataset.key, card.dataset.title));
+    });
+  } catch (err) {
+    grid.innerHTML = `<div class="loading">Error: ${esc(err.message)}</div>`;
+  }
+}
+
+async function selectSchedMovie(ratingKey, title) {
+  try {
+    const movie = await fetch(`/api/movies/${ratingKey}`).then(r => r.json());
+    if (!movie.partId) { alert('No stream found for this movie.'); return; }
+
+    document.getElementById('sched-movie-display').value = movie.title || title;
+    document.getElementById('sched-movie-key').value     = movie.ratingKey;
+    document.getElementById('sched-movie-partid').value  = movie.partId;
+    document.getElementById('sched-movie-clear').style.display = 'inline-flex';
+
+    document.getElementById('sched-movie-modal').style.display = 'none';
+    document.getElementById('schedule-modal').style.display    = 'flex';
+  } catch {
+    alert('Failed to load movie details.');
+  }
+}
+
+document.getElementById('sched-movie-btn').addEventListener('click', () => {
+  document.getElementById('schedule-modal').style.display    = 'none';
+  document.getElementById('sched-movie-modal').style.display = 'flex';
+  loadSchedMovies();
+});
+
+document.getElementById('sched-movie-clear').addEventListener('click', () => {
+  document.getElementById('sched-movie-display').value = '';
+  document.getElementById('sched-movie-key').value     = '';
+  document.getElementById('sched-movie-partid').value  = '';
+  document.getElementById('sched-movie-clear').style.display = 'none';
+});
+
+document.getElementById('close-sched-movie-modal').addEventListener('click', () => {
+  document.getElementById('sched-movie-modal').style.display = 'none';
+  document.getElementById('schedule-modal').style.display    = 'flex';
+});
+
+document.getElementById('sched-search-input').addEventListener('input', () => {
+  clearTimeout(schedMovieSearchTimeout);
+  schedMovieSearchTimeout = setTimeout(loadSchedMovies, 300);
+});
+document.getElementById('sched-genre-select').addEventListener('change', loadSchedMovies);
+document.getElementById('sched-sort-select').addEventListener('change', loadSchedMovies);
 
 async function submitSchedule() {
   const nameEl  = document.getElementById('sched-name');
@@ -216,9 +315,12 @@ async function submitSchedule() {
   const tzEl    = document.getElementById('sched-timezone');
   const errEl   = document.getElementById('sched-error');
 
-  const name     = nameEl.value.trim();
-  const dtLocal  = dtEl.value;   // "YYYY-MM-DDTHH:MM"
-  const timezone = tzEl.value;
+  const name       = nameEl.value.trim();
+  const dtLocal    = dtEl.value;
+  const timezone   = tzEl.value;
+  const movieKey   = document.getElementById('sched-movie-key').value   || null;
+  const movieTitle = document.getElementById('sched-movie-display').value.trim() || null;
+  const partId     = document.getElementById('sched-movie-partid').value || null;
 
   errEl.style.display = 'none';
 
@@ -228,7 +330,6 @@ async function submitSchedule() {
     return;
   }
 
-  // Convert datetime-local value to ISO string (treated as local browser time)
   const scheduledFor = new Date(dtLocal).toISOString();
 
   if (new Date(scheduledFor) <= new Date()) {
@@ -241,7 +342,7 @@ async function submitSchedule() {
     const res  = await fetch('/api/schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name || 'Movie Night', scheduledFor, timezone })
+      body: JSON.stringify({ name: name || 'Movie Night', scheduledFor, timezone, movieKey, movieTitle, partId })
     });
     const data = await res.json();
     if (!res.ok) {
@@ -300,7 +401,10 @@ function renderScheduled(list) {
           <span class="room-card-name">${esc(s.name)}</span>
           <span class="sched-badge">Scheduled</span>
         </div>
-        <div class="room-card-movie">Opens ${esc(timeStr)}</div>
+        <div class="room-card-movie">
+          ${s.movieTitle ? `<span class="room-now-playing">🎬 ${esc(s.movieTitle)}</span><br>` : ''}
+          <span style="color:var(--text-muted);font-size:0.82rem">Opens ${esc(timeStr)}</span>
+        </div>
         <div class="room-card-footer">
           <span class="room-viewers">by ${esc(s.createdBy ? s.createdBy.name : 'unknown')}</span>
           <div style="display:flex;gap:0.4rem;align-items:center">

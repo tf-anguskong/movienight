@@ -108,13 +108,16 @@ function init(openRoomCallback) {
  * @returns {object} the new scheduled room record
  */
 function createScheduled(fields) {
-  const { name, scheduledFor, timezone, createdBy } = fields;
+  const { name, scheduledFor, timezone, movieKey, movieTitle, partId, createdBy } = fields;
   const scheduled = {
     id:           uuidv4(),
     inviteToken:  uuidv4(),
     name:         (name || 'Movie Night').slice(0, 60),
     scheduledFor, // ISO string
     timezone:     timezone || process.env.DEFAULT_TIMEZONE || 'UTC',
+    movieKey:     movieKey  || null,
+    movieTitle:   movieTitle || null,
+    partId:       partId    || null,
     createdBy,    // { id, name }
     createdAt:    new Date().toISOString()
   };

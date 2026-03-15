@@ -492,6 +492,13 @@ function createScheduledRoom(scheduled) {
   room.inviteToken  = scheduled.inviteToken;
   room.awaitingHost = true;
 
+  // Pre-load the movie if one was chosen at scheduling time
+  if (scheduled.movieKey) {
+    room.movieKey   = scheduled.movieKey;
+    room.movieTitle = scheduled.movieTitle;
+    room.partId     = scheduled.partId;
+  }
+
   rooms.set(room.id, room);
   inviteTokens.set(room.inviteToken, room.id);
 

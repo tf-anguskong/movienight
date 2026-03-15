@@ -22,7 +22,7 @@ router.get('/config', (req, res) => {
 // ── POST /api/schedule ────────────────────────────────────
 // Create a new scheduled room.
 router.post('/', (req, res) => {
-  const { name, scheduledFor, timezone } = req.body || {};
+  const { name, scheduledFor, timezone, movieKey, movieTitle, partId } = req.body || {};
 
   if (!scheduledFor) {
     return res.status(400).json({ error: 'scheduledFor is required' });
@@ -53,6 +53,9 @@ router.post('/', (req, res) => {
     name:         (name || '').trim() || 'Movie Night',
     scheduledFor: scheduledDate.toISOString(),
     timezone:     resolvedTz,
+    movieKey:     movieKey  || null,
+    movieTitle:   movieTitle || null,
+    partId:       partId    || null,
     createdBy:    { id: user.id, name: user.displayName || user.name }
   });
 
