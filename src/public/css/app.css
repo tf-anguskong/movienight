@@ -447,6 +447,7 @@ body {
 .chat-messages { flex: 1; min-height: 60px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; }
 .chat-msg { line-height: 1.45; word-break: break-word; }
 .chat-name { font-weight: 600; color: var(--accent); }
+.chat-ts { color: var(--text-muted); font-size: 0.78rem; }
 .chat-input-row { display: flex; gap: 0.4rem; flex-shrink: 0; }
 .chat-input { flex: 1; background: var(--bg-card); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 0.3rem 0.5rem; font-size: 0.82rem; outline: none; }
 .chat-input:focus { border-color: var(--accent); }

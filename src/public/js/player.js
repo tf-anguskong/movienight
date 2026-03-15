@@ -355,10 +355,19 @@ socket.on('disconnect', () => { syncDot.className = 'sync-dot offline'; syncText
 const chatMessages = document.getElementById('chat-messages');
 const chatInput    = document.getElementById('chat-input');
 
-socket.on('chat', ({ name, text, isGuest }) => {
+function formatVideoTime(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+socket.on('chat', ({ name, text, isGuest, videoTime }) => {
   const div = document.createElement('div');
   div.className = 'chat-msg';
-  div.innerHTML = `<span class="chat-name">${esc(name)}${isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span> ${esc(text)}`;
+  const ts = (videoTime != null) ? `<span class="chat-ts">[${esc(formatVideoTime(videoTime))}]</span> ` : '';
+  div.innerHTML = `<span class="chat-name">${esc(name)}${isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span> ${ts}${esc(text)}`;
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 });
@@ -366,7 +375,8 @@ socket.on('chat', ({ name, text, isGuest }) => {
 function sendChat() {
   const text = chatInput.value.trim();
   if (!text) return;
-  socket.emit('chat', { text });
+  const videoTime = currentKey ? video.currentTime : null;
+  socket.emit('chat', { text, videoTime });
   chatInput.value = '';
 }
 

@@ -178,15 +178,19 @@ function setupSync(io) {
     });
 
     // ── Chat ───────────────────────────────────────────────
-    socket.on('chat', ({ text }) => {
+    socket.on('chat', (data) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
-      const trimmed = (text || '').trim().slice(0, 300);
+      const trimmed = ((data && data.text) || '').trim().slice(0, 300);
       if (!trimmed) return;
+      const videoTime = (typeof data.videoTime === 'number' && isFinite(data.videoTime) && data.videoTime >= 0)
+        ? Math.floor(data.videoTime)
+        : null;
       room.broadcast(io, 'chat', {
         name: user.displayName || user.name,
         text: trimmed,
-        isGuest: user.isGuest || false
+        isGuest: user.isGuest || false,
+        videoTime
       });
     });
 
