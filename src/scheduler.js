@@ -18,10 +18,15 @@ let _openRoomCallback = null;
 
 // ── Persistence ───────────────────────────────────────────
 
+function serialize(scheduled) {
+  const { _timer, ...rest } = scheduled;
+  return rest;
+}
+
 function persist() {
   try {
     fs.mkdirSync(dataPath, { recursive: true });
-    fs.writeFileSync(FILE, JSON.stringify(Array.from(store.values()), null, 2), 'utf8');
+    fs.writeFileSync(FILE, JSON.stringify(Array.from(store.values()).map(serialize), null, 2), 'utf8');
   } catch (err) {
     console.error('[Scheduler] Failed to write scheduled.json:', err.message);
   }
@@ -117,7 +122,7 @@ function createScheduled(fields) {
   persist();
   armTimer(scheduled);
   console.log(`[Scheduler] Scheduled room "${scheduled.name}" for ${scheduled.scheduledFor} (id=${scheduled.id})`);
-  return scheduled;
+  return serialize(scheduled);
 }
 
 /**
@@ -155,7 +160,8 @@ function getByInviteToken(token) {
  */
 function listScheduled() {
   return Array.from(store.values())
-    .sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor));
+    .sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor))
+    .map(serialize);
 }
 
 module.exports = { init, createScheduled, deleteScheduled, getScheduled, getByInviteToken, listScheduled };
