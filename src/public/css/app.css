@@ -492,8 +492,17 @@ body {
 .sidebar-title { font-size: 0.95rem; font-weight: 600; color: var(--accent); line-height: 1.4; }
 
 
-.btn-countdown-stop { color: #f05050; border-color: rgba(240,80,80,.5); }
-.btn-countdown-stop:hover { border-color: #f05050; background: var(--bg-sidebar); }
+.btn-cancel-countdown {
+  background: transparent;
+  border: 1px solid rgba(240,80,80,.5);
+  color: #f05050;
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.btn-cancel-countdown:hover { border-color: #f05050; }
 
 .btn-choose-movie {
   background: var(--bg-card);
