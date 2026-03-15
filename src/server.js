@@ -80,7 +80,9 @@ app.post('/api/me/display-name', requirePlexAuth, (req, res) => {
   });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
+}));
 
 app.get('/', requireAuth, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'index.html')));
