@@ -45,7 +45,7 @@ function setHostUI(on, inviteToken) {
   const isYt = roomType === 'youtube';
   document.getElementById('choose-movie-btn').style.display      = (on && !isYt) ? 'block' : 'none';
   document.getElementById('yt-controls-section').style.display   = (on && isYt)  ? 'block' : 'none';
-  document.getElementById('countdown-btn').style.display         = on ? 'block' : 'none';
+  document.getElementById('countdown-section').style.display     = on ? 'block' : 'none';
   document.getElementById('room-controls-section').style.display = on ? 'block' : 'none';
   if (on && inviteToken) setupInviteLink(inviteToken);
   if (!on) document.getElementById('invite-section').style.display = 'none';
@@ -94,18 +94,16 @@ socket.on('room-closed', ({ reason }) => {
 // ── Invite link (host only) ────────────────────────────────
 function setupInviteLink(inviteToken) {
   const inviteSection = document.getElementById('invite-section');
-  const inviteInput   = document.getElementById('invite-link');
-  if (!inviteSection || !inviteInput) return;
+  if (!inviteSection) return;
 
   const url = `${location.origin}/join/${inviteToken}`;
-  inviteInput.value = url;
   inviteSection.style.display = 'block';
 
   document.getElementById('copy-invite-btn').addEventListener('click', () => {
     navigator.clipboard.writeText(url).then(() => {
       const btn = document.getElementById('copy-invite-btn');
       btn.textContent = 'Copied!';
-      setTimeout(() => btn.textContent = 'Copy', 2000);
+      setTimeout(() => btn.textContent = 'Copy Invite Link', 2000);
     });
   });
 }
@@ -674,6 +672,7 @@ socket.on('disconnect', () => { syncDot.className = 'sync-dot offline'; syncText
 // ── Chat ───────────────────────────────────────────────────
 const chatMessages = document.getElementById('chat-messages');
 const chatInput    = document.getElementById('chat-input');
+const chatLog      = []; // raw messages for export
 
 function formatVideoTime(s) {
   const h = Math.floor(s / 3600);
@@ -684,6 +683,7 @@ function formatVideoTime(s) {
 }
 
 socket.on('chat', ({ name, text, isGuest, videoTime, isSystem }) => {
+  chatLog.push({ name, text, isGuest, videoTime, isSystem, wallTime: new Date() });
   const div = document.createElement('div');
   const ts  = videoTime != null ? `<span class="chat-ts">[${esc(formatVideoTime(videoTime))}]</span> ` : '';
   if (isSystem) {
@@ -722,6 +722,33 @@ function sendChat() {
 document.getElementById('chat-send').addEventListener('click', sendChat);
 chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
+document.getElementById('chat-export').addEventListener('click', () => {
+  if (!chatLog.length) return;
+  const room  = roomNameEl.textContent.trim() || 'Room';
+  const title = titleEl.textContent.trim() || '';
+  const date  = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  const header = [
+    `Movie Night Chat Export`,
+    title ? `${room} — ${title}` : room,
+    date,
+    '─'.repeat(40),
+    '',
+  ].join('\n');
+  const lines = chatLog.map(({ name, text, isGuest, videoTime, isSystem }) => {
+    const ts   = videoTime != null ? `[${formatVideoTime(Math.floor(videoTime))}] ` : '';
+    const tag  = isGuest ? ' (guest)' : '';
+    if (isSystem) return `${ts}* ${name} ${text}`;
+    return `${ts}${name}${tag}: ${text}`;
+  });
+  const blob = new Blob([header + lines.join('\n')], { type: 'text/plain' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  const safeName = (title || room).replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'chat';
+  a.download = `movienight_${safeName}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
 // ── Reactions ──────────────────────────────────────────────
 const playerContainer = document.querySelector('.player-container');
 
@@ -746,7 +773,6 @@ let audioCtx         = null;
 
 const countdownOverlay   = document.getElementById('countdown-overlay');
 const countdownCanvas    = document.getElementById('countdown-canvas');
-const countdownBtn       = document.getElementById('countdown-btn');
 const cancelCountdownBtn = document.getElementById('cancel-countdown-btn');
 
 function getAudioCtx() {
@@ -889,7 +915,19 @@ socket.on('countdown', ({ endsAt }) => {
 
 socket.on('countdown-cancelled', stopCountdownAnim);
 
-countdownBtn.addEventListener('click', () => socket.emit('start-countdown'));
+document.querySelectorAll('.btn-countdown-preset[data-secs]').forEach(btn => {
+  btn.addEventListener('click', () => socket.emit('start-countdown', { seconds: Number(btn.dataset.secs) }));
+});
+
+const countdownCustomInput = document.getElementById('countdown-custom');
+document.getElementById('countdown-custom-btn').addEventListener('click', () => {
+  const val = parseInt(countdownCustomInput.value, 10);
+  if (val >= 1 && val <= 99) socket.emit('start-countdown', { seconds: val });
+});
+countdownCustomInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('countdown-custom-btn').click();
+});
+
 cancelCountdownBtn.addEventListener('click', () => socket.emit('cancel-countdown'));
 
 // ── Room settings toggles (host only) ──────────────────────

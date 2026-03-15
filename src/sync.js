@@ -339,12 +339,12 @@ function setupSync(io) {
     });
 
     // ── Countdown (host only) ──────────────────────────────
-    socket.on('start-countdown', () => {
+    socket.on('start-countdown', ({ seconds } = {}) => {
       const room = socketToRoom.get(socket.id);
       if (!room || room.hostSocketId !== socket.id) return;
       if (room.countdownTimer) { clearTimeout(room.countdownTimer); room.countdownTimer = null; }
 
-      const SECONDS = 10;
+      const SECONDS = (Number.isInteger(seconds) && seconds >= 1 && seconds <= 99) ? seconds : 10;
       const endsAt  = Date.now() + SECONDS * 1000;
       room.broadcast(io, 'countdown', { endsAt });
 

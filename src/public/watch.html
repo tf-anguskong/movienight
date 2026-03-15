@@ -20,14 +20,24 @@
       <!-- Host: set YouTube video (YouTube rooms only) -->
       <div id="yt-controls-section" style="display:none">
         <h4 class="section-heading">YouTube Video</h4>
-        <div class="guest-input-row">
-          <input type="text" id="yt-url-input" class="search-input" placeholder="YouTube URL…" style="flex:1;width:auto">
-          <button id="yt-url-btn" class="btn-create" style="white-space:nowrap;padding:0.35rem 0.75rem;font-size:0.82rem">Set</button>
+        <div class="sidebar-input-row">
+          <input type="text" id="yt-url-input" class="sidebar-text-input" placeholder="YouTube URL…">
+          <button id="yt-url-btn" class="btn-sidebar-action">Set</button>
         </div>
         <div id="yt-url-error" style="color:#ff6b7a;font-size:0.78rem;margin-top:0.3rem;display:none"></div>
       </div>
 
-      <button id="countdown-btn" class="btn-countdown" style="display:none">⏱ Start in 10s</button>
+      <!-- Countdown (host only) -->
+      <div id="countdown-section" style="display:none">
+        <h4 class="section-heading">⏱ Countdown</h4>
+        <div class="countdown-presets">
+          <button class="btn-countdown-preset" data-secs="3">3s</button>
+          <button class="btn-countdown-preset" data-secs="5">5s</button>
+          <button class="btn-countdown-preset" data-secs="10">10s</button>
+          <input type="number" id="countdown-custom" class="countdown-custom-input" min="1" max="99" placeholder="#">
+          <button id="countdown-custom-btn" class="btn-countdown-preset btn-countdown-go">▶</button>
+        </div>
+      </div>
       <button id="cancel-countdown-btn" class="btn-cancel-countdown" style="display:none">✕ Cancel countdown</button>
 
       <!-- Room controls (host only) -->
@@ -52,10 +62,7 @@
       <!-- Invite link (host only) -->
       <div id="invite-section" style="display:none">
         <h4 class="section-heading">Invite Link</h4>
-        <div class="invite-row">
-          <input type="text" id="invite-link" class="invite-input" readonly>
-          <button id="copy-invite-btn" class="btn-copy">Copy</button>
-        </div>
+        <button id="copy-invite-btn" class="btn-copy btn-copy-invite">Copy Invite Link</button>
       </div>
 
       <div class="viewers-section">
@@ -64,7 +71,10 @@
       </div>
 
       <div class="chat-section">
-        <h4 class="section-heading">Chat</h4>
+        <div class="chat-heading-row">
+          <h4 class="section-heading">Chat</h4>
+          <button id="chat-export" class="btn-chat-export" title="Export chat as .txt">&#x21E9;</button>
+        </div>
         <div id="chat-messages" class="chat-messages"></div>
         <div class="chat-input-row">
           <input type="text" id="chat-input" class="chat-input" placeholder="Message…" maxlength="300" autocomplete="off">
