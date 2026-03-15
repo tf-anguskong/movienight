@@ -46,6 +46,7 @@ function setHostUI(on, inviteToken) {
   document.getElementById('choose-movie-btn').style.display      = (on && !isYt) ? 'block' : 'none';
   document.getElementById('yt-controls-section').style.display   = (on && isYt)  ? 'block' : 'none';
   document.getElementById('countdown-section').style.display     = on ? 'block' : 'none';
+  document.getElementById('intermission-section').style.display  = on ? 'block' : 'none';
   document.getElementById('room-controls-section').style.display = on ? 'block' : 'none';
   if (on && inviteToken) setupInviteLink(inviteToken);
   if (!on) document.getElementById('invite-section').style.display = 'none';
@@ -70,6 +71,10 @@ socket.on('room-state', (state) => {
   setHostUI(isHost, state.inviteToken);
   if (state.settings) applyRoomSettings(state.settings);
   applyState(state);
+  // Resume intermission overlay if one is active when joining
+  if (state.intermissionEndsAt && state.intermissionEndsAt > Date.now()) {
+    showIntermissionOverlay(state.intermissionEndsAt);
+  }
 });
 
 socket.on('room-settings', applyRoomSettings);
@@ -563,6 +568,11 @@ socket.on('became-host', ({ inviteToken }) => {
   isHost = true;
   setHostUI(true, inviteToken);
   renderViewers(lastViewers);
+  // If intermission is active, expose the cancel button to the new host
+  const iOverlay = document.getElementById('intermission-overlay');
+  if (iOverlay && iOverlay.style.display !== 'none') {
+    document.getElementById('cancel-intermission-btn').style.display = 'block';
+  }
 });
 
 socket.on('lost-host', () => {
@@ -939,3 +949,83 @@ function emitSettings() {
 }
 document.getElementById('toggle-lock-playback').addEventListener('change', emitSettings);
 document.getElementById('toggle-reactions').addEventListener('change', emitSettings);
+
+// ── Intermission ────────────────────────────────────────────
+let intermissionRafId = null;
+
+const intermissionOverlay     = document.getElementById('intermission-overlay');
+const intermissionTimerEl     = document.getElementById('intermission-timer');
+const intermissionMovieTitleEl = document.getElementById('intermission-movie-title');
+const intermissionPosterEl    = document.getElementById('intermission-poster');
+const intermissionPlaceholderEl = document.getElementById('intermission-poster-placeholder');
+const cancelIntermissionBtn   = document.getElementById('cancel-intermission-btn');
+
+function formatIntermissionTime(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function showIntermissionOverlay(endsAt) {
+  intermissionOverlay.style.display = 'flex';
+  if (isHost) cancelIntermissionBtn.style.display = 'block';
+
+  // Movie title + poster
+  intermissionMovieTitleEl.textContent = titleEl.textContent || '';
+  if (currentKey) {
+    intermissionPosterEl.src = `/api/stream/thumb/${currentKey}`;
+    intermissionPosterEl.style.display = 'block';
+    intermissionPlaceholderEl.style.display = 'none';
+    intermissionPosterEl.onerror = () => {
+      intermissionPosterEl.style.display = 'none';
+      intermissionPlaceholderEl.style.display = 'flex';
+    };
+  } else {
+    intermissionPosterEl.style.display = 'none';
+    intermissionPlaceholderEl.style.display = 'flex';
+  }
+
+  if (intermissionRafId) cancelAnimationFrame(intermissionRafId);
+
+  function tick() {
+    const remaining = endsAt - Date.now();
+    intermissionTimerEl.textContent = formatIntermissionTime(remaining);
+    if (remaining > 0) {
+      intermissionRafId = requestAnimationFrame(tick);
+    } else {
+      intermissionRafId = null;
+    }
+  }
+  tick();
+}
+
+function hideIntermissionOverlay() {
+  if (intermissionRafId) { cancelAnimationFrame(intermissionRafId); intermissionRafId = null; }
+  intermissionOverlay.style.display = 'none';
+  cancelIntermissionBtn.style.display = 'none';
+}
+
+socket.on('intermission-started', ({ endsAt }) => {
+  showIntermissionOverlay(endsAt);
+});
+
+socket.on('intermission-ended', () => {
+  hideIntermissionOverlay();
+});
+
+socket.on('intermission-cancelled', () => {
+  hideIntermissionOverlay();
+});
+
+document.getElementById('start-intermission-btn').addEventListener('click', () => {
+  const val = parseInt(document.getElementById('intermission-minutes').value, 10);
+  if (val >= 1 && val <= 120) socket.emit('start-intermission', { minutes: val });
+});
+
+document.getElementById('intermission-minutes').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('start-intermission-btn').click();
+});
+
+cancelIntermissionBtn.addEventListener('click', () => socket.emit('cancel-intermission'));
+

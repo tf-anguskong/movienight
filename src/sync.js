@@ -42,7 +42,9 @@ class Room {
     this.hostIsGuest    = false;
     this.hostSocketId   = null;
     this.awaitingHost   = false;
-    this.countdownTimer = null;
+    this.countdownTimer     = null;
+    this.intermissionTimer  = null;
+    this.intermissionEndsAt = null;
     this.settings       = { playbackLocked: false, reactionsEnabled: true };
     this.roomType       = 'movie'; // 'movie' | 'youtube'
     this.movieKey       = null;
@@ -70,7 +72,8 @@ class Room {
       playing: this.playing,
       position: this.currentPosition(),
       lastUpdate: Date.now(),
-      settings: this.settings
+      settings: this.settings,
+      intermissionEndsAt: this.intermissionEndsAt || null
     };
   }
 
@@ -380,6 +383,51 @@ function setupSync(io) {
       room.broadcast(io, 'countdown-cancelled');
     });
 
+    // ── Intermission (host only) ───────────────────────────
+    socket.on('start-intermission', ({ minutes } = {}) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.hostSocketId !== socket.id) return;
+
+      const MINS     = (Number.isInteger(minutes) && minutes >= 1 && minutes <= 120) ? minutes : 10;
+      const DURATION = MINS * 60 * 1000;
+      const endsAt   = Date.now() + DURATION;
+
+      // Clear any existing intermission
+      if (room.intermissionTimer) { clearTimeout(room.intermissionTimer); room.intermissionTimer = null; }
+
+      // Pause playback
+      room.position   = room.currentPosition();
+      room.playing    = false;
+      room.lastUpdate = Date.now();
+      room.intermissionEndsAt = endsAt;
+
+      room.broadcastState(io);
+      room.broadcast(io, 'intermission-started', { endsAt });
+
+      room.intermissionTimer = setTimeout(() => {
+        room.intermissionTimer  = null;
+        room.intermissionEndsAt = null;
+        room.playing    = true;
+        room.lastUpdate = Date.now();
+        room.broadcastState(io);
+        room.broadcast(io, 'intermission-ended');
+        console.log(`[Room] Intermission ended in "${room.name}" — resuming`);
+      }, DURATION);
+
+      console.log(`[Room] Intermission started in "${room.name}" for ${MINS} min`);
+    });
+
+    socket.on('cancel-intermission', () => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.hostSocketId !== socket.id) return;
+      if (!room.intermissionTimer) return;
+      clearTimeout(room.intermissionTimer);
+      room.intermissionTimer  = null;
+      room.intermissionEndsAt = null;
+      room.broadcast(io, 'intermission-cancelled');
+      console.log(`[Room] Intermission cancelled in "${room.name}"`);
+    });
+
     // ── Transfer host ──────────────────────────────────────
     socket.on('transfer-host', ({ targetSocketId }) => {
       const room = socketToRoom.get(socket.id);
@@ -445,6 +493,36 @@ function setupSync(io) {
           clearTimeout(room.countdownTimer); room.countdownTimer = null;
           room.broadcast(io, 'countdown-cancelled');
         }
+        if (room.intermissionTimer) {
+          clearTimeout(room.intermissionTimer); room.intermissionTimer = null;
+          room.intermissionEndsAt = null;
+        }
+
+        // If viewers remain, auto-migrate host rather than closing the room.
+        if (room.viewers.size > 0) {
+          // Prefer a non-guest viewer; otherwise take any remaining viewer.
+          let candidate = null;
+          for (const [sid, v] of room.viewers) {
+            if (!v.isGuest) { candidate = [sid, v]; break; }
+            if (!candidate) candidate = [sid, v];
+          }
+          if (candidate) {
+            const [newSid, newViewer] = candidate;
+            newViewer.isHost      = true;
+            room.hostId           = newViewer.isGuest ? null : newViewer.id;
+            room.hostName         = newViewer.name;
+            room.hostPicture      = newViewer.picture;
+            room.hostIsGuest      = newViewer.isGuest;
+            room.hostSocketId     = newSid;
+            if (room.closeTimer) { clearTimeout(room.closeTimer); room.closeTimer = null; }
+            io.to(newSid).emit('became-host', { inviteToken: room.inviteToken });
+            room.broadcastViewers(io);
+            broadcastRoomList(io);
+            console.log(`[Room] "${room.name}" — host "${user.name}" left, auto-migrated to "${newViewer.name}"`);
+            return;
+          }
+        }
+
         if (room.hostIsGuest) {
           // Guest hosts cannot reconnect — close the room immediately
           console.log(`[Room] Guest host "${user.name}" disconnected from "${room.name}" — closing`);

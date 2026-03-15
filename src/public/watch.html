@@ -40,6 +40,16 @@
       </div>
       <button id="cancel-countdown-btn" class="btn-cancel-countdown" style="display:none">✕ Cancel countdown</button>
 
+      <!-- Intermission (host only) -->
+      <div id="intermission-section" style="display:none">
+        <h4 class="section-heading">☕ Intermission</h4>
+        <div class="sidebar-input-row">
+          <input type="number" id="intermission-minutes" class="sidebar-text-input" min="1" max="120" placeholder="Minutes" value="10">
+          <button id="start-intermission-btn" class="btn-sidebar-action">Start</button>
+        </div>
+      </div>
+      <button id="cancel-intermission-btn" class="btn-cancel-intermission" style="display:none">✕ End Intermission</button>
+
       <!-- Room controls (host only) -->
       <div id="room-controls-section" style="display:none">
         <h4 class="section-heading">Room Controls</h4>
@@ -108,6 +118,20 @@
       <video id="video-player" controls preload="metadata" style="display:none">
         Your browser does not support the video element.
       </video>
+      <!-- Intermission overlay -->
+      <div id="intermission-overlay" class="intermission-overlay" style="display:none">
+        <div class="intermission-card">
+          <img id="intermission-poster" class="intermission-poster" alt="" style="display:none">
+          <div class="intermission-poster-placeholder" id="intermission-poster-placeholder">🎬</div>
+          <div class="intermission-info">
+            <div class="intermission-label">☕ Intermission</div>
+            <div class="intermission-movie-title" id="intermission-movie-title"></div>
+            <div class="intermission-timer" id="intermission-timer">--:--</div>
+            <div class="intermission-sub">Movie resumes when the timer ends</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Countdown overlay -->
       <div id="countdown-overlay" class="countdown-overlay" style="display:none">
         <canvas id="countdown-canvas" class="countdown-canvas" width="500" height="500"></canvas>
