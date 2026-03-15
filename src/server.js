@@ -81,7 +81,13 @@ app.post('/api/me/display-name', requirePlexAuth, (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.css') || filePath.endsWith('.js')) {
+      res.setHeader('Cache-Control', 'no-store');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
 }));
 
 app.get('/', requireAuth, (req, res) =>
