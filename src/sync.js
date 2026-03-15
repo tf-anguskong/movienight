@@ -6,6 +6,8 @@ const rooms        = new Map(); // roomId -> Room
 const inviteTokens = new Map(); // inviteToken -> roomId
 const socketToRoom = new Map(); // socketId -> Room
 
+let _io = null; // set in setupSync, used by createScheduledRoom
+
 async function fetchYoutubeTitle(videoId) {
   try {
     const res = await axios.get('https://www.youtube.com/oembed', {
@@ -39,6 +41,7 @@ class Room {
     this.hostPicture    = hostPicture || null;
     this.hostIsGuest    = false;
     this.hostSocketId   = null;
+    this.awaitingHost   = false;
     this.countdownTimer = null;
     this.settings       = { playbackLocked: false, reactionsEnabled: true };
     this.roomType       = 'movie'; // 'movie' | 'youtube'
@@ -136,6 +139,7 @@ const reactionLimiter = makeSocketRateLimiter(5, 2000);  // 5 reactions / 2s
 const seekLimiter     = makeSocketRateLimiter(15, 2000); // 15 seeks / 2s (scrubbing)
 
 function setupSync(io) {
+  _io = io;
   // Periodic sync heartbeat — keeps clients corrected during normal playback
   // without waiting for a play/pause/seek event to trigger a state broadcast.
   setInterval(() => {
@@ -186,6 +190,17 @@ function setupSync(io) {
     socket.on('join-room', ({ roomId }) => {
       const room = rooms.get(roomId);
       if (!room) return socket.emit('room-error', 'Room not found');
+
+      // Scheduled room: first joiner becomes the host
+      if (room.awaitingHost) {
+        room.awaitingHost  = false;
+        room.hostId        = user.isGuest ? null : user.id;
+        room.hostName      = user.displayName || user.name;
+        room.hostPicture   = user.picture || null;
+        room.hostIsGuest   = user.isGuest || false;
+        room.hostSocketId  = socket.id;
+        console.log(`[Room] "${room.name}" (scheduled) — first joiner "${user.name}" became host`);
+      }
 
       const isHost         = !room.hostIsGuest && !user.isGuest && user.id === room.hostId;
       const hasValidInvite = user.inviteToken === room.inviteToken;
@@ -458,4 +473,29 @@ function setupSync(io) {
   });
 }
 
-module.exports = { setupSync, getRoomByInviteToken };
+/**
+ * Create a room from a scheduled room record.
+ * Called by the scheduler when the scheduled time arrives.
+ * The room is registered in the rooms/inviteTokens maps and the pre-shared
+ * inviteToken is preserved so outstanding invite links continue to work.
+ */
+function createScheduledRoom(scheduled) {
+  const room = new Room({
+    hostId:      null,
+    hostName:    scheduled.createdBy.name,
+    hostPicture: null,
+    name:        scheduled.name
+  });
+
+  // Preserve the pre-shared invite token
+  room.inviteToken  = scheduled.inviteToken;
+  room.awaitingHost = true;
+
+  rooms.set(room.id, room);
+  inviteTokens.set(room.inviteToken, room.id);
+
+  if (_io) broadcastRoomList(_io);
+  return room;
+}
+
+module.exports = { setupSync, getRoomByInviteToken, createScheduledRoom };

@@ -31,10 +31,20 @@
   <main class="browser-main">
     <div class="browser-toolbar">
       <h2>Rooms</h2>
-      <button id="create-room-btn" class="btn-create" style="display:none">+ Create Room</button>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <button id="schedule-room-btn" class="btn-schedule" style="display:none">&#128197; Schedule</button>
+        <button id="create-room-btn" class="btn-create" style="display:none">+ Create Room</button>
+      </div>
     </div>
     <div id="rooms-grid" class="rooms-grid">
       <div class="loading">Looking for rooms…</div>
+    </div>
+
+    <div id="scheduled-section" style="display:none">
+      <div class="browser-toolbar" style="margin-top:2rem">
+        <h2>Scheduled</h2>
+      </div>
+      <div id="scheduled-grid" class="rooms-grid"></div>
     </div>
   </main>
 
@@ -54,6 +64,27 @@
       <div class="modal-actions">
         <button id="cancel-create" class="btn-logout">Cancel</button>
         <button id="confirm-create" class="btn-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule room modal -->
+  <div id="schedule-modal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <h3>Schedule a Room</h3>
+      <input type="text" id="sched-name" class="search-input" placeholder="Room name" maxlength="60" style="width:100%;margin-bottom:0.75rem">
+      <div class="sched-field-group">
+        <label class="sched-label">Date &amp; Time</label>
+        <input type="datetime-local" id="sched-datetime" class="search-input" style="width:100%">
+      </div>
+      <div class="sched-field-group">
+        <label class="sched-label">Timezone</label>
+        <select id="sched-timezone" class="filter-select" style="width:100%"></select>
+      </div>
+      <div id="sched-error" style="color:#ff6b7a;font-size:0.8rem;margin-top:0.5rem;display:none"></div>
+      <div class="modal-actions">
+        <button id="sched-cancel" class="btn-logout">Cancel</button>
+        <button id="sched-confirm" class="btn-create">Schedule</button>
       </div>
     </div>
   </div>

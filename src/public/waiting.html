@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Room Opening Soon — Playdarr</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .waiting-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .waiting-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 3rem 2.5rem;
+      text-align: center;
+      width: 100%;
+      max-width: 460px;
+    }
+    .waiting-icon {
+      font-size: 3.5rem;
+      margin-bottom: 1rem;
+    }
+    .waiting-card h1 {
+      font-size: 1.5rem;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    .waiting-room-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+    .waiting-opens-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+    .waiting-opens-time {
+      font-size: 0.9rem;
+      color: var(--text);
+      margin-bottom: 2rem;
+    }
+    .waiting-countdown {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+      margin-bottom: 1.5rem;
+      min-height: 2.5rem;
+    }
+    .waiting-redirect-note {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .waiting-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255, 194, 48, 0.3);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="waiting-page">
+  <div class="waiting-card">
+    <div class="waiting-icon">🎬</div>
+    <h1>Room Opening Soon</h1>
+    <div class="waiting-room-name" id="room-name">Loading…</div>
+    <div class="waiting-opens-label">Scheduled for</div>
+    <div class="waiting-opens-time" id="opens-time">…</div>
+    <div class="waiting-countdown" id="countdown">—</div>
+    <div class="waiting-redirect-note">
+      <span class="waiting-spinner"></span>
+      You'll be redirected automatically when the room opens
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    const token = window.location.pathname.split('/').pop();
+    const INFO_URL = '/join/' + token + '/info';
+
+    let scheduledFor = null;
+    let countdownInterval = null;
+    let pollInterval = null;
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+
+    function formatCountdown(ms) {
+      if (ms <= 0) return 'Opening now…';
+      const totalSeconds = Math.floor(ms / 1000);
+      const hours   = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      if (hours > 0) {
+        return hours + 'h ' + pad(minutes) + 'm ' + pad(seconds) + 's';
+      }
+      if (minutes > 0) {
+        return minutes + 'm ' + pad(seconds) + 's';
+      }
+      return seconds + 's';
+    }
+
+    function startCountdown() {
+      if (countdownInterval) clearInterval(countdownInterval);
+      if (!scheduledFor) return;
+
+      function tick() {
+        const remaining = new Date(scheduledFor).getTime() - Date.now();
+        document.getElementById('countdown').textContent = formatCountdown(remaining);
+      }
+      tick();
+      countdownInterval = setInterval(tick, 1000);
+    }
+
+    async function pollInfo() {
+      try {
+        const res = await fetch(INFO_URL, { cache: 'no-store' });
+        if (!res.ok) return; // 404 means scheduled not yet open and not found — keep waiting
+
+        const data = await res.json();
+
+        if (data.roomId) {
+          // Room is now open — redirect through the normal join flow
+          clearInterval(pollInterval);
+          clearInterval(countdownInterval);
+          document.getElementById('countdown').textContent = 'Opening now…';
+          window.location.href = '/join/' + token;
+          return;
+        }
+
+        if (data.scheduled) {
+          // Still waiting — update display info if not already set
+          if (!scheduledFor) {
+            scheduledFor = data.scheduledFor;
+            document.getElementById('room-name').textContent = data.name || 'Movie Night';
+
+            const tz = data.timezone || 'UTC';
+            try {
+              const formatted = new Date(data.scheduledFor).toLocaleString(undefined, {
+                timeZone: tz,
+                weekday: 'short',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZoneName: 'short'
+              });
+              document.getElementById('opens-time').textContent = formatted;
+            } catch {
+              document.getElementById('opens-time').textContent = data.scheduledFor;
+            }
+
+            startCountdown();
+          }
+        }
+      } catch {
+        // Network error — silently retry on next poll
+      }
+    }
+
+    // Start polling immediately and then every 5 seconds
+    pollInfo();
+    pollInterval = setInterval(pollInfo, 5000);
+  </script>
+</body>
+</html>

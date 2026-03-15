@@ -19,7 +19,9 @@ const rateLimit = require('express-rate-limit');
 const authRouter = require('./routes/auth');
 const moviesRouter = require('./routes/movies');
 const { router: streamRouter, clearRoomManifest } = require('./routes/stream');
-const { setupSync, getRoomByInviteToken } = require('./sync');
+const { setupSync, getRoomByInviteToken, createScheduledRoom } = require('./sync');
+const scheduler = require('./scheduler');
+const scheduleRouter = require('./routes/schedule');
 
 const app = express();
 const server = http.createServer(app);
@@ -113,6 +115,7 @@ const authLimiter = rateLimit({
 app.use('/auth', authLimiter, authRouter);
 app.use('/api/movies', requirePlexAuth, moviesRouter);
 app.use('/api/stream', requireAuth, streamRouter);
+app.use('/api/schedule', requirePlexAuth, scheduleRouter);
 app.get('/api/me', (req, res) => res.json({ user: req.session?.user || null }));
 
 app.post('/api/me/display-name', requirePlexAuth, (req, res) => {
@@ -141,28 +144,53 @@ app.get('/', requireAuth, (req, res) =>
 app.get('/watch/:roomId', requireAuth, (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'watch.html')));
 
-// Info endpoint used by join.html to get roomId before posting guest session
-// Does not return roomName to avoid information leakage
+// Info endpoint used by join.html and waiting.html to get roomId or scheduled info
 app.get('/join/:inviteToken/info', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  const room = getRoomByInviteToken(req.params.inviteToken);
-  if (!room) return res.status(404).json({ error: 'Invite expired or invalid' });
-  res.json({ roomId: room.id });
+  const token = req.params.inviteToken;
+
+  // Check active rooms first
+  const room = getRoomByInviteToken(token);
+  if (room) return res.json({ roomId: room.id });
+
+  // Check scheduled rooms
+  const scheduled = scheduler.getByInviteToken(token);
+  if (scheduled) {
+    return res.json({
+      scheduled:    true,
+      scheduledFor: scheduled.scheduledFor,
+      name:         scheduled.name,
+      timezone:     scheduled.timezone
+    });
+  }
+
+  res.status(404).json({ error: 'Invite expired or invalid' });
 });
 
 // Invite link — public, no auth required
 app.get('/join/:inviteToken', (req, res) => {
   // Prevent proxies/CDNs from caching this response — room existence is dynamic
   res.setHeader('Cache-Control', 'no-store');
-  const room = getRoomByInviteToken(req.params.inviteToken);
-  console.log(`[Join] token=${req.params.inviteToken} found=${!!room}`);
-  if (!room) return res.redirect('/?error=expired');
-  // If already logged in (Plex), save the invite token in session and go straight to the room
-  if (req.session?.user && !req.session.user.isGuest) {
-    req.session.user.inviteToken = req.params.inviteToken;
-    return req.session.save(() => res.redirect(`/watch/${room.id}`));
+  const token = req.params.inviteToken;
+  const room  = getRoomByInviteToken(token);
+  console.log(`[Join] token=${token} found=${!!room}`);
+
+  if (room) {
+    // Active room exists
+    if (req.session?.user && !req.session.user.isGuest) {
+      req.session.user.inviteToken = token;
+      return req.session.save(() => res.redirect(`/watch/${room.id}`));
+    }
+    return res.sendFile(path.join(__dirname, 'public', 'join.html'));
   }
-  res.sendFile(path.join(__dirname, 'public', 'join.html'));
+
+  // Check if it's a scheduled room not yet open
+  const scheduled = scheduler.getByInviteToken(token);
+  if (scheduled) {
+    return res.sendFile(path.join(__dirname, 'public', 'waiting.html'));
+  }
+
+  res.redirect('/?error=expired');
 });
 
 app.get('/login', (req, res) => {
@@ -171,6 +199,11 @@ app.get('/login', (req, res) => {
 });
 
 setupSync(io);
+
+scheduler.init((scheduled) => {
+  const room = createScheduledRoom(scheduled);
+  console.log(`[Scheduler] Room "${room.name}" opened from schedule (roomId=${room.id})`);
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => console.log(`Movie Night running on port ${PORT}`));
