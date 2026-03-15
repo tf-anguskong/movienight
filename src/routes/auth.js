@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
+const { getRoomByInviteToken } = require('../sync');
 
 const CLIENT_ID   = process.env.PLEX_CLIENT_ID || 'movienight-app';
 const PLEX_PRODUCT = 'Movie Night';
@@ -104,6 +105,12 @@ router.post('/guest-join', express.json(), (req, res) => {
   const trimmedName = (name || '').trim().slice(0, 40);
   if (!trimmedName) return res.status(400).json({ error: 'Name is required' });
   if (!inviteToken || !roomId) return res.status(400).json({ error: 'Invalid invite' });
+
+  // Validate that the invite token actually maps to the claimed roomId
+  const room = getRoomByInviteToken(inviteToken);
+  if (!room || room.id !== roomId) {
+    return res.status(403).json({ error: 'Invalid or expired invite' });
+  }
 
   req.session.user = {
     id: `guest-${uuidv4()}`,

@@ -67,6 +67,7 @@ function rewriteM3u8(content, baseDir) {
 // ── HLS transcode start ────────────────────────────────────
 router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   const { roomId, ratingKey } = req.params;
+  if (!/^\d+$/.test(ratingKey)) return res.status(400).send('Invalid ratingKey');
   const sessionId = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey}`;
   const cacheKey  = `${roomId}-${ratingKey}`;
 
@@ -155,6 +156,17 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 // Only transcode segments/manifests and direct-play part files are valid proxy targets.
 const ALLOWED_PROXY_PATH = /^\/(video\/:\/transcode\/universal\/|library\/parts\/)/;
 
+// Strip any query params that could be used for open redirect or SSRF manipulation
+const BLOCKED_PROXY_PARAMS = new Set(['redirect', 'url', 'callback', 'next', 'forward', 'dest', 'destination', 'return', 'returnurl', 'returnto']);
+
+function filterProxyParams(query) {
+  const filtered = {};
+  for (const [k, v] of Object.entries(query)) {
+    if (!BLOCKED_PROXY_PARAMS.has(k.toLowerCase())) filtered[k] = v;
+  }
+  return filtered;
+}
+
 // ── General Plex proxy (HLS segments & sub-manifests) ──────
 router.get('/proxy/*', async (req, res) => {
   const plexPath = '/' + req.params[0];
@@ -170,8 +182,9 @@ router.get('/proxy/*', async (req, res) => {
     const response = await axios({
       method: 'GET',
       url: `${PLEX_URL}${plexPath}`,
-      params: { ...req.query, 'X-Plex-Token': PLEX_TOKEN },
+      params: { ...filterProxyParams(req.query), 'X-Plex-Token': PLEX_TOKEN },
       responseType: 'stream',
+      timeout: 30000,
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
@@ -207,6 +220,7 @@ router.get('/proxy/*', async (req, res) => {
 
 // ── Thumbnail proxy ────────────────────────────────────────
 router.get('/thumb/:ratingKey', async (req, res) => {
+  if (!/^\d+$/.test(req.params.ratingKey)) return res.status(400).send('Invalid ratingKey');
   try {
     const detailRes = await axios.get(
       `${PLEX_URL}/library/metadata/${req.params.ratingKey}`,
@@ -222,7 +236,8 @@ router.get('/thumb/:ratingKey', async (req, res) => {
       method: 'GET',
       url: `${PLEX_URL}/photo/:/transcode`,
       params: { url: thumb, width: 300, height: 450, 'X-Plex-Token': PLEX_TOKEN },
-      responseType: 'stream'
+      responseType: 'stream',
+      timeout: 10000
     });
 
     res.setHeader('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');

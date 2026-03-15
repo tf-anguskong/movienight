@@ -75,6 +75,26 @@ function broadcastRoomList(io) {
   io.emit('room-list', Array.from(rooms.values()).map(r => r.summary()));
 }
 
+// Per-socket rate limiter — sliding window
+function makeSocketRateLimiter(maxCalls, windowMs) {
+  const history = new Map(); // socketId -> timestamp[]
+  return {
+    allow(socketId) {
+      const now = Date.now();
+      const times = (history.get(socketId) || []).filter(t => now - t < windowMs);
+      if (times.length >= maxCalls) return false;
+      times.push(now);
+      history.set(socketId, times);
+      return true;
+    },
+    delete(socketId) { history.delete(socketId); }
+  };
+}
+
+const chatLimiter     = makeSocketRateLimiter(3, 2000);  // 3 msgs / 2s
+const reactionLimiter = makeSocketRateLimiter(5, 2000);  // 5 reactions / 2s
+const seekLimiter     = makeSocketRateLimiter(15, 2000); // 15 seeks / 2s (scrubbing)
+
 function setupSync(io) {
   // Periodic sync heartbeat — keeps clients corrected during normal playback
   // without waiting for a play/pause/seek event to trigger a state broadcast.
@@ -114,10 +134,11 @@ function setupSync(io) {
       const room = rooms.get(roomId);
       if (!room) return socket.emit('room-error', 'Room not found');
 
-      const isHost          = !room.hostIsGuest && !user.isGuest && user.id === room.hostId;
-      const hasValidInvite  = user.isGuest && user.inviteToken === room.inviteToken;
-      const isPlexViewer    = !user.isGuest && !isHost;
-      // Plex users can join any room (they browse via lobby anyway)
+      const isHost         = !room.hostIsGuest && !user.isGuest && user.id === room.hostId;
+      const hasValidInvite = user.inviteToken === room.inviteToken;
+      // Plex users can join any room (they're all authenticated against the same server).
+      // Guests must arrive via an invite link, which stores the token in their session.
+      const isPlexViewer   = !user.isGuest && !isHost;
 
       if (!isHost && !hasValidInvite && !isPlexViewer) {
         return socket.emit('room-error', 'Access denied — use the invite link to join');
@@ -191,6 +212,7 @@ function setupSync(io) {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
       if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
+      if (!seekLimiter.allow(socket.id)) return;
       room.position = position; room.lastUpdate = Date.now();
       room.broadcastState(io);
     });
@@ -199,9 +221,11 @@ function setupSync(io) {
     socket.on('chat', (data) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!chatLimiter.allow(socket.id)) return;
       const trimmed = ((data && data.text) || '').trim().slice(0, 300);
       if (!trimmed) return;
-      const videoTime = (typeof data.videoTime === 'number' && isFinite(data.videoTime) && data.videoTime >= 0)
+      const videoTime = (typeof data.videoTime === 'number' && isFinite(data.videoTime)
+        && data.videoTime >= 0 && data.videoTime < 86400)
         ? Math.floor(data.videoTime)
         : null;
       room.broadcast(io, 'chat', {
@@ -217,6 +241,7 @@ function setupSync(io) {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
       if (!room.settings.reactionsEnabled) return;
+      if (!reactionLimiter.allow(socket.id)) return;
       const allowed = ['👍','❤️','😂','😱','😮','👏'];
       if (!allowed.includes(emoji)) return;
       room.broadcast(io, 'reaction', { emoji, name: user.displayName || user.name });
@@ -301,6 +326,9 @@ function setupSync(io) {
 
     // ── Disconnect ─────────────────────────────────────────
     socket.on('disconnect', () => {
+      chatLimiter.delete(socket.id);
+      reactionLimiter.delete(socket.id);
+      seekLimiter.delete(socket.id);
       const room = socketToRoom.get(socket.id);
       socketToRoom.delete(socket.id);
       if (!room) return;

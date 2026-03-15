@@ -68,6 +68,9 @@ router.get('/', async (req, res) => {
 
 // GET /api/movies/:ratingKey
 router.get('/:ratingKey', async (req, res) => {
+  if (!/^\d+$/.test(req.params.ratingKey)) {
+    return res.status(400).json({ error: 'Invalid ratingKey' });
+  }
   try {
     const movie = await plex.getMovieDetails(req.params.ratingKey);
     const part = movie.Media?.[0]?.Part?.[0];
