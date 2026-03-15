@@ -20,22 +20,16 @@
       padding: 3rem 2.5rem;
       text-align: center;
       width: 100%;
-      max-width: 500px;
+      max-width: 460px;
     }
     .waiting-icon { font-size: 3.5rem; margin-bottom: 1rem; }
     .waiting-card h1 { font-size: 1.5rem; color: var(--accent); margin-bottom: 0.4rem; }
-    .waiting-room-name {
-      font-size: 1.15rem;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 1.5rem;
-    }
-
+    .waiting-room-name { font-size: 1.15rem; font-weight: 600; color: var(--text); margin-bottom: 1.75rem; }
     .waiting-time-block {
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 0.9rem 1.25rem;
+      padding: 1rem 1.25rem;
       margin-bottom: 2rem;
     }
     .waiting-time-label {
@@ -43,67 +37,14 @@
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--text-muted);
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.5rem;
     }
-    .waiting-time-value {
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .countdown-segments {
-      display: flex;
-      justify-content: center;
-      gap: 0.6rem;
-      margin-bottom: 2rem;
-    }
-    .countdown-seg {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.4rem;
-    }
-    .countdown-seg-value {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      min-width: 64px;
-      padding: 0.6rem 0.4rem;
-      font-size: 2.2rem;
-      font-weight: 700;
-      color: var(--accent);
-      font-variant-numeric: tabular-nums;
-      letter-spacing: 0.02em;
-      line-height: 1;
-    }
-    .countdown-seg-label {
-      font-size: 0.68rem;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: var(--text-muted);
-    }
-    .countdown-sep {
-      font-size: 2rem;
-      font-weight: 700;
-      color: var(--border);
-      align-self: flex-start;
-      padding-top: 0.5rem;
-      line-height: 1;
-      user-select: none;
-    }
-    .countdown-opening {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: var(--accent);
-      margin-bottom: 2rem;
-      min-height: 2rem;
-    }
-
+    .waiting-time-value { font-size: 1.05rem; font-weight: 600; color: var(--text); }
     .waiting-redirect-note { font-size: 0.82rem; color: var(--text-muted); }
     .waiting-spinner {
       display: inline-block;
       width: 12px; height: 12px;
-      border: 2px solid rgba(255, 194, 48, 0.3);
+      border: 2px solid rgba(255,194,48,0.3);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.9s linear infinite;
@@ -118,36 +59,10 @@
     <div class="waiting-icon">🎬</div>
     <h1>Room Opening Soon</h1>
     <div class="waiting-room-name" id="room-name"></div>
-
     <div class="waiting-time-block">
       <div class="waiting-time-label">Scheduled for</div>
       <div class="waiting-time-value" id="opens-time"></div>
     </div>
-
-    <div class="countdown-segments" id="countdown-segments">
-      <div class="countdown-seg">
-        <div class="countdown-seg-value" id="seg-days">00</div>
-        <div class="countdown-seg-label">Days</div>
-      </div>
-      <div class="countdown-sep">:</div>
-      <div class="countdown-seg">
-        <div class="countdown-seg-value" id="seg-hours">00</div>
-        <div class="countdown-seg-label">Hours</div>
-      </div>
-      <div class="countdown-sep">:</div>
-      <div class="countdown-seg">
-        <div class="countdown-seg-value" id="seg-mins">00</div>
-        <div class="countdown-seg-label">Mins</div>
-      </div>
-      <div class="countdown-sep">:</div>
-      <div class="countdown-seg">
-        <div class="countdown-seg-value" id="seg-secs">00</div>
-        <div class="countdown-seg-label">Secs</div>
-      </div>
-    </div>
-
-    <div class="countdown-opening" id="opening-msg" style="display:none">Opening now…</div>
-
     <div class="waiting-redirect-note">
       <span class="waiting-spinner"></span>
       You'll be redirected automatically when the room opens
@@ -157,84 +72,45 @@
   <script>
     'use strict';
 
-    // Token is the last path segment (before any query string)
-    const token    = window.location.pathname.split('/').pop();
-    const INFO_URL = '/join/' + token + '/info';
+    const token  = window.location.pathname.split('/').pop();
+    const params = new URLSearchParams(window.location.search);
 
-    // Data is passed as query params by the server so we can render immediately
-    const params       = new URLSearchParams(window.location.search);
-    const scheduledFor = params.get('t');   // ISO string
+    // Populate from URL params immediately — no async needed
+    document.getElementById('room-name').textContent = params.get('n') || 'Movie Night';
+
+    const scheduledFor = params.get('t');
     const timezone     = params.get('z') || 'UTC';
-    const roomName     = params.get('n') || 'Movie Night';
-
-    function pad(n) { return String(Math.floor(n)).padStart(2, '0'); }
-
-    // Populate static fields immediately — no async needed
-    document.getElementById('room-name').textContent = roomName;
     try {
       document.getElementById('opens-time').textContent =
         new Date(scheduledFor).toLocaleString(undefined, {
-          timeZone: timezone,
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
+          timeZone:   timezone,
+          weekday:    'long',
+          year:       'numeric',
+          month:      'long',
+          day:        'numeric',
+          hour:       '2-digit',
+          minute:     '2-digit',
           timeZoneName: 'short'
         });
     } catch {
       document.getElementById('opens-time').textContent = scheduledFor || '—';
     }
 
-    function updateSegments() {
-      const remaining = scheduledFor ? new Date(scheduledFor).getTime() - Date.now() : 0;
-      if (remaining <= 0) {
-        document.getElementById('countdown-segments').style.display = 'none';
-        document.getElementById('opening-msg').style.display = 'block';
-        return false; // signal: done
-      }
-      const totalSecs = Math.floor(remaining / 1000);
-      const days    = Math.floor(totalSecs / 86400);
-      const hours   = Math.floor((totalSecs % 86400) / 3600);
-      const minutes = Math.floor((totalSecs % 3600) / 60);
-      const seconds = totalSecs % 60;
-      document.getElementById('seg-days').textContent  = pad(days);
-      document.getElementById('seg-hours').textContent = pad(hours);
-      document.getElementById('seg-mins').textContent  = pad(minutes);
-      document.getElementById('seg-secs').textContent  = pad(seconds);
-      return true; // signal: still counting
-    }
-
-    // Start countdown immediately
-    updateSegments();
-    const countdownInterval = setInterval(() => {
-      const stillGoing = updateSegments();
-      if (!stillGoing) {
-        clearInterval(countdownInterval);
-        pollInfo(); // fire an immediate poll when the timer hits zero
-      }
-    }, 1000);
-
-    // Poll for room-open; redirect when roomId appears
-    async function pollInfo() {
+    // Poll for room open, then redirect
+    async function poll() {
       try {
-        const res  = await fetch(INFO_URL, { cache: 'no-store' });
+        const res  = await fetch('/join/' + token + '/info', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         if (data.roomId) {
-          clearInterval(pollInterval);
-          clearInterval(countdownInterval);
-          document.getElementById('countdown-segments').style.display = 'none';
-          document.getElementById('opening-msg').style.display = 'block';
+          clearInterval(interval);
           window.location.href = '/join/' + token;
         }
-      } catch {
-        // Network error — retry on next interval
-      }
+      } catch { /* retry next tick */ }
     }
 
-    const pollInterval = setInterval(pollInfo, 2000);
+    const interval = setInterval(poll, 2000);
+    poll();
   </script>
 </body>
 </html>
