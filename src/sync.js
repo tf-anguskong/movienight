@@ -202,7 +202,8 @@ function setupSync(io) {
         console.log(`[Room] "${room.name}" (scheduled) — first joiner "${user.name}" became host`);
       }
 
-      const isHost         = !room.hostIsGuest && !user.isGuest && user.id === room.hostId;
+      const isHost         = socket.id === room.hostSocketId ||
+                             (!room.hostIsGuest && !user.isGuest && user.id === room.hostId);
       const hasValidInvite = user.inviteToken === room.inviteToken;
       // Plex users can join any room (they're all authenticated against the same server).
       // Guests must arrive via an invite link, which stores the token in their session.

@@ -122,6 +122,12 @@
       function tick() {
         const remaining = new Date(scheduledFor).getTime() - Date.now();
         document.getElementById('countdown').textContent = formatCountdown(remaining);
+        // When the countdown expires, poll immediately instead of waiting for the next interval
+        if (remaining <= 0) {
+          clearInterval(countdownInterval);
+          countdownInterval = null;
+          pollInfo();
+        }
       }
       tick();
       countdownInterval = setInterval(tick, 1000);
@@ -174,9 +180,9 @@
       }
     }
 
-    // Start polling immediately and then every 5 seconds
+    // Start polling immediately and then every 2 seconds
     pollInfo();
-    pollInterval = setInterval(pollInfo, 5000);
+    pollInterval = setInterval(pollInfo, 2000);
   </script>
 </body>
 </html>
