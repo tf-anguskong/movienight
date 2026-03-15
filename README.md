@@ -16,13 +16,19 @@ Playdarr is a self-hosted watch-party app for Plex. It lets you and your friends
 - **Multi-room** — multiple watch parties can run simultaneously, each with their own state
 
 ### Rooms & Access
-- **Plex login** — sign in via Plex OAuth; any user with access to the Plex server can create a room
-- **Guest invite links** — share a link; guests enter a display name and join without a Plex account
-- **Host transfer** — the host can promote any viewer (including guests) to host mid-session
-- **Auto host migration** — if the host leaves and other viewers remain, the room automatically promotes the next best viewer (preferring Plex users) rather than closing
+
+> **Who can host?** Only users authenticated against your own Plex server can create rooms, schedule sessions, or act as host. Playdarr verifies at login that the authenticating Plex account actually has access to the configured `PLEX_URL` — if they don't, they can't log in. Guests (people without a Plex account) can only join via an invite link shared by a Plex user; they cannot create rooms or access the lobby independently.
+
+- **Plex login** — sign in via Plex OAuth; only accounts with verified access to your Plex server can log in and create rooms
+- **Guest invite links** — hosts share a link; guests enter a display name and join without a Plex account; guests cannot see the lobby or create rooms
+- **Host transfer** — the host can promote any viewer (including guests) to host mid-session; non-Plex hosts cannot create new rooms from the lobby
+- **Auto host migration** — if the host leaves and other viewers remain, the room automatically promotes the next best viewer (preferring Plex users over guests) rather than closing
 - **Room persistence** — rooms live in memory; a 30-second grace timer keeps a room alive if the host briefly navigates away
 
 ### Scheduled Rooms
+
+> Scheduling is Plex-only. Guests cannot schedule rooms.
+
 - **Schedule a room** — Plex users can schedule a watch party in advance, picking a date/time, timezone, room name, and optionally pre-selecting a movie
 - **Pre-shared invite links** — the invite link is generated at scheduling time and can be shared immediately; it works both before and after the room opens
 - **Waiting page** — guests who arrive early see a branded waiting page showing the scheduled date/time in their local timezone; the page polls in the background and redirects automatically when the room opens
