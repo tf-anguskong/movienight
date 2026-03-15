@@ -632,6 +632,11 @@ body {
 }
 
 /* YouTube player */
-#yt-player-container { width: 100%; height: 100%; }
-#yt-player { width: 100%; height: 100%; }
-#yt-player iframe { width: 100% !important; height: 100% !important; border: none; }
+#yt-player-container {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 1;
+}
+#yt-player { width: 100%; height: 100%; display: block; }
+#yt-player iframe { width: 100% !important; height: 100% !important; border: none; display: block; }

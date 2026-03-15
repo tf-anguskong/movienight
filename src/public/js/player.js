@@ -345,8 +345,6 @@ function createYtPlayer(videoId, targetTime, shouldPlay) {
 
   ytPlayer = new YT.Player('yt-player', {
     videoId,
-    width: '100%',
-    height: '100%',
     playerVars: { rel: 0, modestbranding: 1 },
     events: {
       onReady(e) {
