@@ -17,11 +17,11 @@ Playdarr is a self-hosted watch-party app for Plex. It lets you and your friends
 
 ### Rooms & Access
 
-> **Who can host?** Only users authenticated against your own Plex server can create rooms, schedule sessions, or act as host. Playdarr verifies at login that the authenticating Plex account actually has access to the configured `PLEX_URL` — if they don't, they can't log in. Guests (people without a Plex account) can only join via an invite link shared by a Plex user; they cannot create rooms or access the lobby independently.
+> **Who can create rooms?** Only users authenticated against your own Plex server can create rooms or schedule sessions. Playdarr verifies at login that the authenticating Plex account actually has access to the configured `PLEX_URL` — if they don't, they can't log in. Guests (people without a Plex account) can only join via an invite link shared by a Plex user; they cannot create rooms, schedule sessions, or access the lobby independently. A guest can be granted host of an existing room via transfer or auto-migration, but that only gives them control over playback — they still cannot open new rooms.
 
 - **Plex login** — sign in via Plex OAuth; only accounts with verified access to your Plex server can log in and create rooms
 - **Guest invite links** — hosts share a link; guests enter a display name and join without a Plex account; guests cannot see the lobby or create rooms
-- **Host transfer** — the host can promote any viewer (including guests) to host mid-session; non-Plex hosts cannot create new rooms from the lobby
+- **Host transfer** — the host can promote any viewer (including guests) to host mid-session, giving them playback control for that room; guests granted host cannot create new rooms or scheduled events
 - **Auto host migration** — if the host leaves and other viewers remain, the room automatically promotes the next best viewer (preferring Plex users over guests) rather than closing
 - **Room persistence** — rooms live in memory; a 30-second grace timer keeps a room alive if the host briefly navigates away
 
