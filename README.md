@@ -19,13 +19,24 @@ Playdarr is a self-hosted watch-party app for Plex. It lets you and your friends
 - **Plex login** — sign in via Plex OAuth; any user with access to the Plex server can create a room
 - **Guest invite links** — share a link; guests enter a display name and join without a Plex account
 - **Host transfer** — the host can promote any viewer (including guests) to host mid-session
+- **Auto host migration** — if the host leaves and other viewers remain, the room automatically promotes the next best viewer (preferring Plex users) rather than closing
 - **Room persistence** — rooms live in memory; a 30-second grace timer keeps a room alive if the host briefly navigates away
+
+### Scheduled Rooms
+- **Schedule a room** — Plex users can schedule a watch party in advance, picking a date/time, timezone, room name, and optionally pre-selecting a movie
+- **Pre-shared invite links** — the invite link is generated at scheduling time and can be shared immediately; it works both before and after the room opens
+- **Waiting page** — guests who arrive early see a branded waiting page showing the scheduled date/time in their local timezone; the page polls in the background and redirects automatically when the room opens
+- **First-joiner becomes host** — when the scheduled time arrives and the room opens, whoever joins first is granted host, regardless of whether they have a Plex account
+- **Persistent schedule** — upcoming scheduled rooms survive server restarts (`DATA_PATH/scheduled.json`); the timer re-arms on startup
+- **Default timezone** — set `DEFAULT_TIMEZONE` in `.env` to pre-fill the timezone picker when scheduling (e.g. `America/New_York`)
 
 ### Social
 - **Real-time chat** — all viewers can send messages; chat includes the sender's current movie timestamp for context
+- **Chat export** — download the full chat log as a `.txt` file with video timestamps
 - **Play/pause attribution** — a system message appears in chat whenever someone plays or pauses, showing who did it and at what position
 - **Emoji reactions** — a reaction bar (👍 ❤️ 😂 😱 😮 👏) overlays the video on hover; reactions float up the screen for all viewers
-- **Countdown timer** — host can start a 10-second countdown before playback begins; all viewers see the overlay; host can cancel mid-count
+- **Countdown timer** — host can fire a countdown (3 s, 5 s, 10 s, or custom) before playback begins; all viewers see a film-leader overlay with beep tones; host can cancel mid-count
+- **Intermission** — host can start a timed intermission (1–120 minutes); the video pauses for everyone and an overlay displays the movie poster with a live MM:SS countdown; the movie resumes automatically when the timer ends, or the host can end it early
 
 ---
 
@@ -78,6 +89,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `APP_URL` | Yes | Public-facing URL of this app, used to build the Plex OAuth callback (e.g. `https://playdarr.yourdomain.com` or `http://localhost:3000` for local dev) |
 | `COOKIE_SECURE` | Yes | `true` when running behind HTTPS, `false` for local dev |
 | `PLEX_CLIENT_ID` | No | Identifier sent to Plex — any stable string (default: `movienight-app`) |
+| `DEFAULT_TIMEZONE` | No | IANA timezone used as the default when scheduling rooms (e.g. `America/New_York`). Falls back to `UTC`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | Cloudflare Zero Trust tunnel token if using Cloudflare for HTTPS |
 | `PORT` | No | Port to listen on (default: `3000`) |
 
