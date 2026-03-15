@@ -177,6 +177,19 @@ function setupSync(io) {
       room.broadcastState(io);
     });
 
+    // ── Chat ───────────────────────────────────────────────
+    socket.on('chat', ({ text }) => {
+      const room = socketToRoom.get(socket.id);
+      if (!room) return;
+      const trimmed = (text || '').trim().slice(0, 300);
+      if (!trimmed) return;
+      room.broadcast(io, 'chat', {
+        name: user.displayName || user.name,
+        text: trimmed,
+        isGuest: user.isGuest || false
+      });
+    });
+
     // ── Transfer host ──────────────────────────────────────
     socket.on('transfer-host', ({ targetSocketId }) => {
       const room = socketToRoom.get(socket.id);

@@ -350,3 +350,25 @@ document.getElementById('genre-select').addEventListener('change', loadMovies);
 document.getElementById('sort-select').addEventListener('change', loadMovies);
 
 socket.on('disconnect', () => { syncDot.className = 'sync-dot offline'; syncText.textContent = 'Disconnected'; });
+
+// ── Chat ───────────────────────────────────────────────────
+const chatMessages = document.getElementById('chat-messages');
+const chatInput    = document.getElementById('chat-input');
+
+socket.on('chat', ({ name, text, isGuest }) => {
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.innerHTML = `<span class="chat-name">${esc(name)}${isGuest ? ' <span class="guest-tag">guest</span>' : ''}</span> ${esc(text)}`;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+});
+
+function sendChat() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  socket.emit('chat', { text });
+  chatInput.value = '';
+}
+
+document.getElementById('chat-send').addEventListener('click', sendChat);
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
