@@ -41,8 +41,9 @@ app.use(helmet({
       scriptSrc: ["'self'", 'cdn.jsdelivr.net', 'https://www.youtube.com', 'https://s.ytimg.com'],
       styleSrc: ["'self'", "'unsafe-inline'"],
       mediaSrc: ["'self'", 'blob:'],
-      connectSrc: ["'self'", 'wss:', 'ws:'],
+      connectSrc: ["'self'", ...(process.env.APP_URL ? [`wss://${new URL(process.env.APP_URL).host}`, `ws://${new URL(process.env.APP_URL).host}`] : ['wss:', 'ws:'])],
       frameSrc: ["'self'", 'https://www.youtube.com'],
+      frameAncestors: ["'none'"],
       imgSrc: ["'self'", 'data:', 'https:'],
     }
   },
@@ -68,6 +69,8 @@ const sessionMiddleware = session({
   saveUninitialized: false,
   cookie: {
     secure: process.env.COOKIE_SECURE === 'true',
+    httpOnly: true,
+    sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000
   }
 });

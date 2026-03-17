@@ -209,13 +209,18 @@ function setupSync(io) {
       const room = rooms.get(roomId);
       if (!room) return socket.emit('room-error', 'Room not found');
 
-      // Scheduled room: first joiner becomes the host
+      // Scheduled room: first *Plex* user to join becomes the host.
+      // Guests are not allowed to claim host on a scheduled room — they must
+      // wait until a Plex user has joined and opened the room.
       if (room.awaitingHost) {
+        if (user.isGuest) {
+          return socket.emit('room-error', 'Waiting for the host to arrive. Please try again shortly.');
+        }
         room.awaitingHost  = false;
-        room.hostId        = user.isGuest ? null : user.id;
+        room.hostId        = user.id;
         room.hostName      = user.displayName || user.name;
         room.hostPicture   = user.picture || null;
-        room.hostIsGuest   = user.isGuest || false;
+        room.hostIsGuest   = false;
         room.hostSocketId  = socket.id;
         console.log(`[Room] "${room.name}" (scheduled) — first joiner "${user.name}" became host`);
       }
