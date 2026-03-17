@@ -113,7 +113,14 @@ const authLimiter = rateLimit({
 app.use('/auth', authLimiter, authRouter);
 app.use('/api/movies', requirePlexAuth, moviesRouter);
 app.use('/api/shows', requirePlexAuth, showsRouter);
-app.use('/api/stream', requireAuth, streamRouter);
+const streamLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 300,                   // 300 HLS segment requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many stream requests' }
+});
+app.use('/api/stream', requireAuth, streamLimiter, streamRouter);
 app.use('/api/schedule', requirePlexAuth, scheduleRouter);
 app.get('/api/me', (req, res) => {
     const user = req.session?.user || null;

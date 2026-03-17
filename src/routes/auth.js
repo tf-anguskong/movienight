@@ -3,6 +3,7 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const { getRoomByInviteToken } = require('../sync');
+const { encryptToken, decryptToken } = require('../tokenCrypto');
 
 const CLIENT_ID   = process.env.PLEX_CLIENT_ID || 'movienight-app';
 const PLEX_PRODUCT = 'Movie Night';
@@ -89,7 +90,7 @@ router.get('/plex/callback/:pinId', async (req, res) => {
         name: plexUser.friendlyName || plexUser.username || plexUser.email,
         email: plexUser.email,
         picture: plexUser.thumb,
-        plexToken: authToken,
+        plexToken: encryptToken(authToken),
         isGuest: false
       };
       req.session.save(err => {

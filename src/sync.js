@@ -144,9 +144,12 @@ function makeSocketRateLimiter(maxCalls, windowMs) {
   };
 }
 
-const chatLimiter     = makeSocketRateLimiter(3, 2000);  // 3 msgs / 2s
-const reactionLimiter = makeSocketRateLimiter(5, 2000);  // 5 reactions / 2s
-const seekLimiter     = makeSocketRateLimiter(15, 2000); // 15 seeks / 2s (scrubbing)
+const chatLimiter          = makeSocketRateLimiter(3, 2000);  // 3 msgs / 2s
+const reactionLimiter      = makeSocketRateLimiter(5, 2000);  // 5 reactions / 2s
+const seekLimiter          = makeSocketRateLimiter(15, 2000); // 15 seeks / 2s (scrubbing)
+const playPauseLimiter     = makeSocketRateLimiter(10, 2000); // 10 play/pause / 2s
+const positionLimiter      = makeSocketRateLimiter(5, 1000);  // 5 position reports / 1s
+const bufferingLimiter     = makeSocketRateLimiter(10, 2000); // 10 buffering events / 2s
 
 function formatEpisodeTitle(showTitle, ep) {
   if (!ep) return showTitle || 'Unknown';
@@ -359,6 +362,7 @@ function setupSync(io) {
     socket.on('play', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!playPauseLimiter.allow(socket.id)) return;
       if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
       room.position = position ?? room.currentPosition();
       room.playing = true; room.lastUpdate = Date.now();
@@ -374,6 +378,7 @@ function setupSync(io) {
     socket.on('pause', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!playPauseLimiter.allow(socket.id)) return;
       if (room.settings.playbackLocked && socket.id !== room.hostSocketId) return;
       room.position = position ?? room.currentPosition();
       room.playing = false; room.lastUpdate = Date.now();
@@ -551,6 +556,7 @@ function setupSync(io) {
     socket.on('position-report', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!positionLimiter.allow(socket.id)) return;
       const viewer = room.viewers.get(socket.id);
       if (!viewer) return;
       if (typeof position !== 'number' || !isFinite(position) || position < 0) return;
@@ -562,6 +568,7 @@ function setupSync(io) {
     socket.on('buffering-state', ({ buffering }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
+      if (!bufferingLimiter.allow(socket.id)) return;
       const viewer = room.viewers.get(socket.id);
       if (!viewer) return;
       viewer.buffering = !!buffering;

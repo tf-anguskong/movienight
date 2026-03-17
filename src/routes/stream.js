@@ -12,9 +12,21 @@ const CLIENT_ID = process.env.PLEX_CLIENT_ID || 'movienight-app';
 // manifestPending holds in-flight fetch Promises so concurrent requests
 // (e.g. host + guests all loading after a movie change) coalesce into one
 // Plex call rather than racing to start.m3u8 simultaneously.
-const manifestCache   = new Map(); // cacheKey → manifest string
+const manifestCache   = new Map(); // cacheKey → { manifest: string, cachedAt: number }
 const manifestPending = new Map(); // cacheKey → Promise<string>
 const activeSessions  = new Map(); // cacheKey → { sessionId, ratingKey }
+const MANIFEST_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours — evict stale manifests
+
+// Periodically evict manifests that haven't been used for MANIFEST_TTL_MS
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of manifestCache.entries()) {
+    if (now - entry.cachedAt > MANIFEST_TTL_MS) {
+      manifestCache.delete(key);
+      activeSessions.delete(key);
+    }
+  }
+}, 30 * 60 * 1000); // run every 30 minutes
 
 function clearRoomManifest(roomId) {
   for (const key of manifestCache.keys()) {
@@ -94,7 +106,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   // Serve cached manifest to latecomers — avoids calling start.m3u8 again
   // which would restart the Plex session and kick other viewers.
   const cached = manifestCache.get(cacheKey);
-  if (cached) return res.send(cached);
+  if (cached) return res.send(cached.manifest);
 
   // If another request is already fetching this manifest (e.g. host + guests
   // all load simultaneously after a movie change), wait for that same Promise
@@ -161,7 +173,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 
   try {
     const manifest = await promise;
-    manifestCache.set(cacheKey, manifest);
+    manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
     activeSessions.set(cacheKey, { sessionId, ratingKey });
     manifestPending.delete(cacheKey);
     res.send(manifest);
