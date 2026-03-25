@@ -276,16 +276,29 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
         hlsInstance.recoverMediaError();
       } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
         // Network error — Plex session likely expired. Bust the server-side
-        // manifest cache and restart from the current playback position so
-        // Plex transcodes from roughly the right spot.
+        // manifest cache and destroy+recreate the HLS instance so we start
+        // completely fresh rather than trying to recover on a broken instance.
         networkRetried = true;
         console.warn('[HLS] Network error, busting manifest and restarting:', d.details);
+        const offsetMs = Math.floor((video.currentTime || 0) * 1000);
+        const bustSrc = `${src}?bust=1&offset=${offsetMs}`;
         setTimeout(() => {
-          if (hlsInstance) {
-            const offsetMs = Math.floor((video.currentTime || 0) * 1000);
-            hlsInstance.loadSource(`${src}?bust=1&offset=${offsetMs}`);
-            hlsInstance.startLoad();
-          }
+          if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+          hlsInstance = new Hls({ startPosition: -1, enableWorker: true });
+          hlsInstance.loadSource(bustSrc);
+          hlsInstance.attachMedia(video);
+          hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.currentTime = offsetMs / 1000;
+            video.play().catch(() => {});
+          });
+          hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
+            if (!d2.fatal) return;
+            console.error('[HLS] Fatal after bust:', d2.type, d2.details);
+            hidePlayOverlay();
+            noMovieText.textContent = `Stream error: ${d2.details} — try refreshing.`;
+            noMovie.style.display = 'block';
+            video.style.display = 'none';
+          });
         }, 2000);
       } else {
         console.error('[HLS] Fatal:', d.type, d.details);

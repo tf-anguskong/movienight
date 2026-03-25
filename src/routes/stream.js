@@ -31,6 +31,15 @@ setInterval(() => {
 function clearRoomManifest(roomId) {
   for (const key of manifestCache.keys()) {
     if (key.startsWith(roomId + '-')) {
+      // Fire-and-forget: stop the Plex transcode session so the next
+      // fetchManifest() starts a clean session rather than reusing a
+      // potentially stuck/terminating one with the same session ID.
+      const session = activeSessions.get(key);
+      if (session) {
+        axios.get(`${PLEX_URL}/video/:/transcode/universal/stop`, {
+          params: { 'X-Plex-Token': PLEX_TOKEN, session: session.sessionId }
+        }).catch(() => {}); // ignore errors — best effort
+      }
       manifestCache.delete(key);
       activeSessions.delete(key);
     }
@@ -105,8 +114,15 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 
   // Serve cached manifest to latecomers — avoids calling start.m3u8 again
   // which would restart the Plex session and kick other viewers.
+  // Expired entries are treated as missing so a fresh Plex session is started.
   const cached = manifestCache.get(cacheKey);
-  if (cached) return res.send(cached.manifest);
+  if (cached) {
+    if (Date.now() - cached.cachedAt < MANIFEST_TTL_MS) return res.send(cached.manifest);
+    // Stale — evict and fall through to start a fresh session
+    manifestCache.delete(cacheKey);
+    activeSessions.delete(cacheKey);
+    console.log(`[HLS] Manifest expired for ${cacheKey}, starting fresh session`);
+  }
 
   // If another request is already fetching this manifest (e.g. host + guests
   // all load simultaneously after a movie change), wait for that same Promise
@@ -245,8 +261,10 @@ router.get('/proxy/*', async (req, res) => {
       req.on('close', () => response.data.destroy());
     }
   } catch (err) {
+    const status = err.response?.status || 500;
+    console.error(`[HLS] Proxy error ${status} for ${plexPath.substring(0, 80)}:`, err.message);
     if (!res.headersSent) {
-      res.status(err.response?.status || 500).send('Proxy error');
+      res.status(status).send('Proxy error');
     }
   }
 });
