@@ -136,6 +136,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   const bust     = !!req.query.bust;
   const offsetMs = Math.max(0, parseInt(req.query.offset, 10) || 0);
   if (bust) {
+    stopKeepalive(cacheKey);
     manifestCache.delete(cacheKey);
     activeSessions.delete(cacheKey);
     console.log(`[HLS] Cache busted for ${cacheKey} — starting fresh session at offset ${offsetMs}ms`);
@@ -151,6 +152,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   if (cached) {
     if (Date.now() - cached.cachedAt < MANIFEST_TTL_MS) return res.send(cached.manifest);
     // Stale — evict and fall through to start a fresh session
+    stopKeepalive(cacheKey);
     manifestCache.delete(cacheKey);
     activeSessions.delete(cacheKey);
     console.log(`[HLS] Manifest expired for ${cacheKey}, starting fresh session`);

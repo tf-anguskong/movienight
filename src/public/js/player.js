@@ -298,6 +298,7 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
             noMovieText.textContent = `Stream error: ${d2.details} — try refreshing.`;
             noMovie.style.display = 'block';
             video.style.display = 'none';
+            currentKey = null; // allow next state sync to retry the stream
           });
         }, 2000);
       } else {
@@ -306,6 +307,7 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
         noMovieText.textContent = `Stream error: ${d.details} — try refreshing.`;
         noMovie.style.display = 'block';
         video.style.display = 'none';
+        currentKey = null; // allow next state sync to retry the stream
       }
     });
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -365,7 +367,7 @@ function showNotif(text) {
 // ── Position reporting (for drift indicator) ───────────────
 setInterval(() => {
   let pos = null;
-  if (roomType === 'movie' && currentKey && !video.paused && !video.ended) {
+  if ((roomType === 'movie' || roomType === 'tv') && currentKey && !video.paused && !video.ended) {
     pos = video.currentTime;
   } else if (roomType === 'youtube' && ytPlayer && ytVideoId) {
     if (ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING) {
