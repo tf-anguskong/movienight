@@ -795,13 +795,19 @@ socket.on('lost-host', () => {
 // ── Playback → server ──────────────────────────────────────
 video.addEventListener('click', () => {
   if (roomType !== 'livetv') return;
-  if (video.paused) video.play().catch(() => {});
-  else video.pause();
+  if (video.paused) {
+    video.play().catch(() => {});
+    socket.emit('play', { position: 0 });
+  } else {
+    video.pause();
+    socket.emit('pause', { position: 0 });
+  }
 });
 
 video.addEventListener('play', () => {
   if (isSyncing) return;
-  if (roomSettings.playbackLocked && !isHost && roomType !== 'livetv') {
+  if (roomType === 'livetv') return; // live TV emits from click handler; ignore HLS.js internal events
+  if (roomSettings.playbackLocked && !isHost) {
     // Immediately revert — don't let the video run while server-state says paused
     isSyncing = true; video.pause(); releaseSyncLock(); return;
   }
@@ -809,7 +815,8 @@ video.addEventListener('play', () => {
 });
 video.addEventListener('pause',  () => {
   if (isSyncing) return;
-  if (roomSettings.playbackLocked && !isHost && roomType !== 'livetv') return;
+  if (roomType === 'livetv') return; // live TV emits from click handler; ignore HLS.js internal events
+  if (roomSettings.playbackLocked && !isHost) return;
   socket.emit('pause', { position: video.currentTime });
 });
 video.addEventListener('seeked', () => {

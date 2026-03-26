@@ -51,6 +51,7 @@ function startFfmpeg(channel) {
   const args = [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+discardcorrupt',
+    '-use_wallclock_as_timestamps', '1',
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
