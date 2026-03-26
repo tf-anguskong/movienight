@@ -51,12 +51,12 @@ function startFfmpeg(channel) {
   const args = [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+discardcorrupt',
-    '-use_wallclock_as_timestamps', '1',
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
     '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+    '-af', 'aresample=async=1000',
     '-f', 'hls',
     '-hls_time', '2',
     '-hls_list_size', '20',
