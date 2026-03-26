@@ -75,8 +75,9 @@ function applyRoomSettings(settings) {
     if (volOverlay) volOverlay.style.display = (locked && !isHost) ? 'flex' : 'none';
   } else if (roomType === 'livetv') {
     // Live TV: hide native controls (no seeking on a live stream).
-    // Show volume overlay for all viewers so they can still adjust volume.
+    // Click the video to pause/play. Volume overlay stays for volume control.
     video.controls = false;
+    video.style.cursor = 'pointer';
     const volOverlay = document.getElementById('volume-overlay');
     if (volOverlay) volOverlay.style.display = 'flex';
   }
@@ -781,8 +782,15 @@ socket.on('lost-host', () => {
 });
 
 // ── Playback → server ──────────────────────────────────────
+video.addEventListener('click', () => {
+  if (roomType !== 'livetv') return;
+  if (video.paused) video.play().catch(() => {});
+  else video.pause();
+});
+
 video.addEventListener('play', () => {
   if (isSyncing) return;
+  if (roomType === 'livetv') return; // live TV play/pause is viewer-local, not synced
   if (roomSettings.playbackLocked && !isHost) {
     // Immediately revert — don't let the video run while server-state says paused
     isSyncing = true; video.pause(); releaseSyncLock(); return;
@@ -791,6 +799,7 @@ video.addEventListener('play', () => {
 });
 video.addEventListener('pause',  () => {
   if (isSyncing) return;
+  if (roomType === 'livetv') return; // live TV play/pause is viewer-local, not synced
   if (roomSettings.playbackLocked && !isHost) return;
   socket.emit('pause', { position: video.currentTime });
 });
