@@ -237,8 +237,89 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   }
 });
 
-// Only transcode segments/manifests and direct-play part files are valid proxy targets.
-const ALLOWED_PROXY_PATH = /^\/(video\/:\/transcode\/universal\/|library\/parts\/)/;
+// ── Live TV HLS transcode start ───────────────────────────
+const LIVE_CHANNEL_ID = /^[a-f0-9]+-[a-f0-9]+$/i;
+
+router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
+  const { roomId, channelId } = req.params;
+  if (!LIVE_CHANNEL_ID.test(channelId)) return res.status(400).send('Invalid channelId');
+
+  const sessionId = `mn-live-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}-${channelId.slice(0, 8)}`;
+  const cacheKey  = `${roomId}-livetv-${channelId}`;
+
+  res.setHeader('Content-Type', 'application/x-mpegURL');
+  res.setHeader('Cache-Control', 'no-cache');
+
+  const cached = manifestCache.get(cacheKey);
+  if (cached) {
+    if (Date.now() - cached.cachedAt < MANIFEST_TTL_MS) return res.send(cached.manifest);
+    stopKeepalive(cacheKey);
+    manifestCache.delete(cacheKey);
+    activeSessions.delete(cacheKey);
+  }
+
+  if (manifestPending.has(cacheKey)) {
+    try { return res.send(await manifestPending.get(cacheKey)); }
+    catch { return res.status(500).send('HLS error'); }
+  }
+
+  const fetchManifest = async () => {
+    const params = {
+      'X-Plex-Token':              PLEX_TOKEN,
+      'X-Plex-Client-Identifier':  CLIENT_ID,
+      'X-Plex-Session-Identifier': sessionId,
+      'X-Plex-Product':            'Movie Night',
+      'X-Plex-Platform':           'Chrome',
+      'X-Plex-Platform-Version':   '120.0',
+      'X-Plex-Device':             'Windows',
+      'X-Plex-Device-Name':        'Movie Night',
+      'X-Plex-Version':            '1.0.0',
+      hasMDE:          '1',
+      path:            `/livetv/timelines/${channelId}`,
+      videoResolution: '1920x1080',
+      maxVideoBitrate: '8000',
+      videoCodec:      'h264',
+      audioCodec:      'aac',
+      protocol:        'hls',
+      copyts:          '1',
+      mediaIndex:      '0',
+    };
+
+    const qs = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
+      .join('&');
+
+    console.log(`[LiveTV HLS] Starting Plex session for channel ${channelId}`);
+    const plexRes = await axios.get(`${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`, {
+      headers: {
+        Accept: 'application/x-mpegURL',
+        'X-Plex-Client-Identifier': CLIENT_ID,
+        'X-Plex-Token': PLEX_TOKEN,
+      }
+    });
+
+    const baseDir = '/video/:/transcode/universal/';
+    return rewriteM3u8(plexRes.data, baseDir);
+  };
+
+  const promise = fetchManifest();
+  manifestPending.set(cacheKey, promise);
+
+  try {
+    const manifest = await promise;
+    manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
+    activeSessions.set(cacheKey, { sessionId, ratingKey: null });
+    manifestPending.delete(cacheKey);
+    res.send(manifest);
+  } catch (err) {
+    manifestPending.delete(cacheKey);
+    console.error('[LiveTV HLS] Start error:', err.response?.status, err.message);
+    res.status(500).send('HLS error');
+  }
+});
+
+// Only transcode segments/manifests, direct-play part files, and live TV paths are valid proxy targets.
+const ALLOWED_PROXY_PATH = /^\/(video\/:\/transcode\/universal\/|library\/parts\/|livetv\/)/;
 
 // Strip any query params that could be used for open redirect or SSRF manipulation
 const BLOCKED_PROXY_PARAMS = new Set(['redirect', 'url', 'callback', 'next', 'forward', 'dest', 'destination', 'return', 'returnurl', 'returnto']);

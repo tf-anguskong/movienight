@@ -351,11 +351,11 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
 }
 
 // ── Live TV player ─────────────────────────────────────────
-function loadLiveTv(channel) {
+function loadLiveTv(channelId) {
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
-  const src = '/api/livetv/hls/index.m3u8';
+  const src = `/api/stream/hls/livetv/${roomId}/${encodeURIComponent(channelId)}/master.m3u8`;
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
     hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
     hlsInstance.loadSource(src);
@@ -367,7 +367,7 @@ function loadLiveTv(channel) {
       if (!d.fatal) return;
       currentKey = null; // allow retry on next state event
       console.error('[LiveTV] Fatal HLS error:', d.details);
-      setTimeout(() => { if (currentKey === null) loadLiveTv(channel); }, 5000);
+      setTimeout(() => { if (currentKey === null) loadLiveTv(channelId); }, 5000);
     });
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = src;
@@ -472,11 +472,11 @@ function renderGuide() {
     return;
   }
   list.innerHTML = guideChannels.map(ch => {
-    const isActive  = ch.number === currentKey;
+    const isActive  = ch.id === currentKey;
     const clickable = isHost;
     return `
       <div class="guide-channel-item${isActive ? ' active' : ''}${clickable ? ' clickable' : ''}"
-           data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}">
+           data-channel="${esc(ch.id)}" data-title="${esc(ch.title || ch.number)}">
         <span class="guide-channel-num">${esc(ch.number)}</span>
         <span class="guide-channel-name">${esc(ch.title || ch.number)}</span>
         ${isActive ? '<span class="guide-now-playing">On Air</span>' : ''}
@@ -1081,7 +1081,7 @@ async function loadChannels() {
       return;
     }
     list.innerHTML = channels.map(ch => `
-      <div class="episode-item" data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}" style="cursor:pointer">
+      <div class="episode-item" data-channel="${esc(ch.id)}" data-title="${esc(ch.title || ch.number)}" style="cursor:pointer">
         <div class="episode-info">
           <span class="episode-title">${esc(ch.number)} ${esc(ch.title || '')}</span>
         </div>

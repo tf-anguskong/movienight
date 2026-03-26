@@ -11,8 +11,6 @@ const socketToRoom = new Map(); // socketId -> Room
 let _io = null; // set in setupSync, used by createScheduledRoom
 let _enabledRoomTypes = { movie: true, tv: true, youtube: true, livetv: false };
 
-// Loaded lazily when livetv is enabled
-let liveTvManager = null;
 
 async function fetchYoutubeTitle(videoId) {
   try {
@@ -172,7 +170,6 @@ function formatEpisodeTitle(showTitle, ep) {
 function setupSync(io, enabledRoomTypes) {
   _io = io;
   if (enabledRoomTypes) _enabledRoomTypes = enabledRoomTypes;
-  if (_enabledRoomTypes.livetv) liveTvManager = require('./livetv-manager');
 
   // Periodic sync heartbeat — keeps clients corrected during normal playback
   // without waiting for a play/pause/seek event to trigger a state broadcast.
@@ -181,10 +178,6 @@ function setupSync(io, enabledRoomTypes) {
       if (room.playing && room.viewers.size > 1) {
         room.broadcastState(io);
         room.broadcastViewers(io);
-      }
-      // Ping streamer for live TV rooms with active viewers
-      if (room.roomType === 'livetv' && room.viewers.size > 0) {
-        if (liveTvManager) liveTvManager.heartbeat();
       }
     });
   }, 5000);
@@ -381,11 +374,10 @@ function setupSync(io, enabledRoomTypes) {
     socket.on('select-livetv-channel', ({ channel, channelTitle }) => {
       const room = socketToRoom.get(socket.id);
       if (!room || socket.id !== room.hostSocketId || room.roomType !== 'livetv') return;
-      room.liveTvChannel      = String(channel || '').slice(0, 20);
+      room.liveTvChannel      = String(channel || '').slice(0, 60);
       room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
       room.playing    = true;
       room.lastUpdate = Date.now();
-      if (liveTvManager) liveTvManager.switchChannel(room.liveTvChannel);
       room.broadcastState(io);
       console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel}`);
     });
