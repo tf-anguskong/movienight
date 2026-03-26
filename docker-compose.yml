@@ -29,6 +29,7 @@ services:
       - HDHR_PORT=${HDHR_PORT:-5004}
       - DEFAULT_CHANNEL=${LIVETV_DEFAULT_CHANNEL:-7.1}
       - PLEX_HOST=${LIVETV_PLEX_HOST}
+      - PLEX_TOKEN=${LIVETV_PLEX_TOKEN:-${PLEX_TOKEN}}
     restart: unless-stopped
 
 volumes:

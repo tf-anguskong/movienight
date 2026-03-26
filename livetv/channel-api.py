@@ -18,6 +18,7 @@ app = Flask(__name__)
 CHANNEL_FILE   = '/config/channel'
 HEARTBEAT_FILE = '/config/heartbeat'
 PLEX_HOST      = os.environ.get('PLEX_HOST', 'http://localhost:32400')
+PLEX_TOKEN     = os.environ.get('PLEX_TOKEN', '')
 
 def read_channel():
     try:
@@ -55,9 +56,12 @@ def heartbeat():
 def guide():
     """Fetch EPG guide data from Plex DVR."""
     try:
+        headers = {'Accept': 'application/json'}
+        if PLEX_TOKEN:
+            headers['X-Plex-Token'] = PLEX_TOKEN
         resp = requests.get(
             f'{PLEX_HOST}/livetv/dvrs',
-            headers={'Accept': 'application/json'},
+            headers=headers,
             timeout=10
         )
         resp.raise_for_status()
