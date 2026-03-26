@@ -59,7 +59,7 @@ A Plex user creates a room, shares an invite link, and guests join straight from
 - **Streaming** — Plex HLS transcoding proxied server-side; [HLS.js](https://github.com/video-dev/hls.js) on the client
 - **Auth** — Plex PIN-based OAuth for Plex users; session-based guest tokens for invited viewers
 - **Sessions** — `express-session` with `session-file-store`
-- **Deployment** — Docker + optional Cloudflare Tunnel or NGINX reverse proxy
+- **Deployment** — Docker + reverse proxy of your choice
 
 ---
 
@@ -90,29 +90,7 @@ Playdarr will be available at `http://localhost:3000` (or whichever `PORT` you c
 
 ### 3. Expose it to the internet
 
-Playdarr needs to be reachable over HTTPS for guests to join from outside your network. Two common approaches:
-
----
-
-#### Option A — Cloudflare Tunnel (easiest, no port forwarding)
-
-Cloudflare Tunnel creates an outbound-only encrypted tunnel from your server to Cloudflare's edge. No port forwarding, no firewall changes, free on the Zero Trust free tier.
-
-1. Follow the [Cloudflare Tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/) to create a tunnel and point it at `http://localhost:3000`
-2. Add your tunnel token to `.env`:
-   ```
-   CLOUDFLARE_TUNNEL_TOKEN=your_token_here
-   ```
-3. Set `APP_URL` to your Cloudflare Tunnel hostname (e.g. `https://playdarr.yourdomain.com`) and `COOKIE_SECURE=true`
-4. The `docker-compose.yml` includes a `cloudflared` service that will start automatically with the token set
-
-> ⚠️ **Important:** Even when using a Cloudflare Tunnel for the app, `PLEX_URL` must remain a **local/LAN address**. Video segments are fetched server-side and must not route through Cloudflare — doing so will saturate your upload bandwidth immediately.
-
----
-
-#### Option B — NGINX reverse proxy
-
-If you prefer to manage your own reverse proxy, NGINX works well. Point it at `http://localhost:3000` and terminate SSL there.
+Playdarr needs to be reachable over HTTPS for guests to join from outside your network. Serve it however you like — NGINX, Caddy, Traefik, Tailscale, or any other reverse proxy or tunnel solution.
 
 A minimal NGINX config:
 
@@ -146,7 +124,7 @@ server {
 
 Set `APP_URL` to your domain and `COOKIE_SECURE=true` in `.env`.
 
-> **Tip:** If you're not comfortable editing NGINX config files directly, [NGINX Proxy Manager](https://nginxproxymanager.com/) provides a web UI that handles proxy hosts, SSL certificates (via Let's Encrypt), and WebSocket support with minimal configuration. It runs as a Docker container and is a popular choice for home lab setups.
+> **Tip:** [NGINX Proxy Manager](https://nginxproxymanager.com/) provides a web UI that handles proxy hosts, SSL certificates (via Let's Encrypt), and WebSocket support with minimal configuration. It runs as a Docker container and is a popular choice for home lab setups.
 
 ---
 
@@ -168,20 +146,19 @@ Copy `.env.example` to `.env` and fill in the values:
 | Variable | Required | Description |
 |---|---|---|
 | `SESSION_SECRET` | Yes | Random secret for signing session cookies. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `PLEX_URL` | Yes | Local/LAN address of your Plex server as seen from the Docker container (e.g. `http://host.docker.internal:32400`). **Never use your external domain** — transcoding must not round-trip through Cloudflare. |
+| `PLEX_URL` | Yes | Local/LAN address of your Plex server as seen from the Docker container (e.g. `http://host.docker.internal:32400`). **Never use your external domain** — transcoding traffic must stay on your LAN. |
 | `PLEX_TOKEN` | Yes | Server token from Plex Settings → Troubleshooting |
 | `APP_URL` | Yes | Public-facing URL of this app, used to build the Plex OAuth callback (e.g. `https://playdarr.yourdomain.com` or `http://localhost:3000` for local dev) |
 | `COOKIE_SECURE` | Yes | `true` when running behind HTTPS, `false` for local dev |
 | `PLEX_CLIENT_ID` | No | Identifier sent to Plex — any stable string (default: `movienight-app`) |
 | `DEFAULT_TIMEZONE` | No | IANA timezone used as the default when scheduling rooms (e.g. `America/New_York`). Falls back to `UTC`. |
-| `CLOUDFLARE_TUNNEL_TOKEN` | No | Cloudflare Zero Trust tunnel token if using Cloudflare for HTTPS |
 | `PORT` | No | Port to listen on (default: `3000`) |
 
 ---
 
 ## Deployment notes
 
-- **PLEX_URL must be a LAN address.** If you use your external domain, every video segment will travel out through Cloudflare and back in, saturating your upload and likely hitting Cloudflare's limits.
+- **PLEX_URL must be a LAN address.** If you use your external domain, every video segment will round-trip through your reverse proxy, saturating your upload bandwidth.
 - **COOKIE_SECURE must match your protocol.** `true` behind HTTPS, `false` over plain HTTP. Getting this wrong will silently break all sessions.
 - Rooms and chat are **in-memory only** — everything is lost on server restart. This is intentional.
 - The stream proxy restricts forwarded requests to Plex transcode paths only (`/video/:/transcode/universal/` and `/library/parts/`). Arbitrary Plex API access through the proxy is blocked.

@@ -31,14 +31,6 @@ services:
       - PLEX_HOST=${LIVETV_PLEX_HOST}
     restart: unless-stopped
 
-#  cloudflared:
-#    image: cloudflare/cloudflared:latest
-#    container_name: movienight-tunnel
-#    restart: unless-stopped
-#    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-#    depends_on:
-#      - movienight
-
 volumes:
   sessions:
     driver: local

@@ -27,8 +27,8 @@ No test suite exists. There is no linter configured.
 
 Copy `.env.example` to `.env`. Key variables:
 
-- `PLEX_URL` — must be a **local/LAN address** (e.g. `http://host.docker.internal:32400`), never the external domain. Plex transcoding requests must not round-trip through Cloudflare.
-- `COOKIE_SECURE` — set `true` only when behind HTTPS (Cloudflare Tunnel). Controls the session cookie `secure` flag directly; **not** driven by `NODE_ENV`.
+- `PLEX_URL` — must be a **local/LAN address** (e.g. `http://host.docker.internal:32400`), never the external domain. Plex transcoding requests must stay on the LAN.
+- `COOKIE_SECURE` — set `true` only when behind HTTPS (reverse proxy). Controls the session cookie `secure` flag directly; **not** driven by `NODE_ENV`.
 - `APP_URL` — public-facing URL, used to build the Plex OAuth callback URL.
 - `PLEX_TOKEN` — server token from Plex Settings → Troubleshooting.
 
