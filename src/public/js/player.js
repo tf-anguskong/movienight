@@ -24,9 +24,11 @@ let unreadChats      = 0;
 let lastKnownState   = null;
 
 // ── Guide state ────────────────────────────────────────────
-let guideOpen     = false;
-let guideExpanded = false;
-let guideChannels = [];
+let guideOpen        = false;
+let guideExpanded    = false;
+let guideChannels    = [];
+let guideFetchedAt   = 0;
+const GUIDE_CLIENT_TTL = 120_000; // re-fetch guide (incl. now-playing) every 2 min
 
 // ── YouTube state ──────────────────────────────────────────
 let ytApiLoaded   = false;
@@ -482,11 +484,13 @@ function toggleGuideExpand() {
 async function loadGuide() {
   const list = document.getElementById('guide-channel-list');
   if (!list) return;
-  if (guideChannels.length) { renderGuide(); return; }
-  list.innerHTML = '<div class="loading" style="padding:1rem">Loading guide…</div>';
+  const now = Date.now();
+  if (guideChannels.length && now - guideFetchedAt < GUIDE_CLIENT_TTL) { renderGuide(); return; }
+  if (!guideChannels.length) list.innerHTML = '<div class="loading" style="padding:1rem">Loading guide…</div>';
   try {
     const { channels } = await fetch('/api/livetv/guide').then(r => r.json());
-    guideChannels = channels || [];
+    guideChannels  = channels || [];
+    guideFetchedAt = now;
     renderGuide();
   } catch {
     list.innerHTML = '<div class="loading" style="padding:1rem">Failed to load guide.</div>';
@@ -507,7 +511,10 @@ function renderGuide() {
       <div class="guide-channel-item${isActive ? ' active' : ''}${clickable ? ' clickable' : ''}"
            data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}">
         <span class="guide-channel-num">${esc(ch.number)}</span>
-        <span class="guide-channel-name">${esc(ch.title || ch.number)}</span>
+        <div class="guide-channel-info">
+          <span class="guide-channel-name">${esc(ch.title || ch.number)}</span>
+          ${ch.nowPlaying ? `<span class="guide-channel-program">${esc(ch.nowPlaying)}</span>` : ''}
+        </div>
         ${isActive ? '<span class="guide-now-playing">On Air</span>' : ''}
       </div>
     `;
