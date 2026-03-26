@@ -6,6 +6,8 @@ const { getGuide } = require('../livetv-manager');
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
 const CLIENT_ID = process.env.PLEX_CLIENT_ID || 'movienight-app';
+// Live TV transcode must use the local Plex address — external relay rejects live TV requests
+const LIVETV_PLEX_URL = process.env.LIVETV_PLEX_HOST || process.env.PLEX_URL;
 
 // Cache the master manifest per room+movie so only the first viewer
 // calls start.m3u8. Latecomers get the cached manifest and share
@@ -297,7 +299,7 @@ router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
       .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
       .join('&');
 
-    const transcodeUrl = `${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`;
+    const transcodeUrl = `${LIVETV_PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`;
     console.log(`[LiveTV HLS] Starting Plex session for channel ${channelId}, path=${plexPath}, url=`, transcodeUrl.replace(PLEX_TOKEN, 'REDACTED'));
     const plexRes = await axios.get(transcodeUrl, {
       headers: {
