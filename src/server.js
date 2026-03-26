@@ -235,6 +235,29 @@ app.get('/join/:inviteToken', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const token = req.params.inviteToken;
   const room  = getRoomByInviteToken(token);
+
+  const ua = req.headers['user-agent'] || '';
+  if (/discordbot|slackbot|telegrambot|whatsapp|twitterbot|facebookexternalhit/i.test(ua)) {
+    const esc = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const title = room
+      ? (room.movieTitle || room.liveTvChannelTitle
+          ? `${room.name} — ${room.movieTitle || room.liveTvChannelTitle}`
+          : room.name)
+      : 'Playdarr';
+    const desc = room
+      ? `${room.viewers.size} viewer${room.viewers.size !== 1 ? 's' : ''} watching. Click to join!`
+      : 'Join the room on Playdarr.';
+    const url = `${process.env.APP_URL || ''}/join/${token}`;
+    return res.send(`<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Playdarr">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(desc)}">
+<meta property="og:url" content="${esc(url)}">
+<meta name="twitter:card" content="summary">
+</head><body></body></html>`);
+  }
   console.log(`[Join] token=${token} found=${!!room}`);
 
   if (room) {
