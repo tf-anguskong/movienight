@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const { getGuide } = require('../livetv-manager');
 
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
@@ -238,7 +239,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 });
 
 // ── Live TV HLS transcode start ───────────────────────────
-const LIVE_CHANNEL_ID = /^[a-f0-9]+-[a-f0-9]+$/i;
+const LIVE_CHANNEL_ID = /^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/;
 
 router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
   const { roomId, channelId } = req.params;
@@ -264,6 +265,13 @@ router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
   }
 
   const fetchManifest = async () => {
+    const guide = await getGuide();
+    const chan = guide.channels.find(c => c.id === channelId);
+    const plexPath = chan?.plexKey || `/livetv/channels/${channelId}`;
+    if (!chan?.plexKey) {
+      console.warn(`[LiveTV HLS] No plexKey found for channel ${channelId}, falling back to ${plexPath}`);
+    }
+
     const params = {
       'X-Plex-Token':              PLEX_TOKEN,
       'X-Plex-Client-Identifier':  CLIENT_ID,
@@ -275,7 +283,7 @@ router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
       'X-Plex-Device-Name':        'Movie Night',
       'X-Plex-Version':            '1.0.0',
       hasMDE:          '1',
-      path:            `/livetv/timelines/${channelId}`,
+      path:            plexPath,
       videoResolution: '1920x1080',
       maxVideoBitrate: '8000',
       videoCodec:      'h264',
@@ -313,7 +321,7 @@ router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
     res.send(manifest);
   } catch (err) {
     manifestPending.delete(cacheKey);
-    console.error('[LiveTV HLS] Start error:', err.response?.status, err.message);
+    console.error('[LiveTV HLS] Start error:', err.response?.status, err.message, err.response?.data);
     res.status(500).send('HLS error');
   }
 });

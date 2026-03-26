@@ -21,13 +21,31 @@ async function getGuide() {
     const epgId = dvrsRes.data?.MediaContainer?.Dvr?.[0]?.epgIdentifier;
     if (!epgId) throw new Error('No DVR/EPG identifier found');
 
-    const { data } = await axios.get(`${PLEX_HOST}/${epgId}/lineups/dvr/channels`, { headers, timeout: 10000 });
-    const channels = (data?.MediaContainer?.Channel || []).map(ch => ({
-      id:     ch.id || ch.gridKey || '',
-      number: ch.vcn   || '',
-      title:  ch.title || ch.callSign || '',
-      thumb:  ch.thumb || null,
-    }));
+    const [epgRes, plexRes] = await Promise.all([
+      axios.get(`${PLEX_HOST}/${epgId}/lineups/dvr/channels`, { headers, timeout: 10000 }),
+      axios.get(`${PLEX_HOST}/livetv/channels`, { headers, timeout: 10000 }).catch(e => {
+        console.warn('[LiveTV] Could not fetch /livetv/channels:', e.message);
+        return null;
+      }),
+    ]);
+
+    // Build a map from channel number → Plex native key
+    const plexByNumber = new Map();
+    for (const ch of plexRes?.data?.MediaContainer?.Channel || []) {
+      const num = String(ch.channelNumber || ch.vcn || '');
+      if (num) plexByNumber.set(num, ch.key || `/livetv/channels/${ch.ratingKey}`);
+    }
+
+    const channels = (epgRes.data?.MediaContainer?.Channel || []).map(ch => {
+      const num = String(ch.vcn || '');
+      return {
+        id:      ch.id || ch.gridKey || '',
+        number:  num,
+        title:   ch.title || ch.callSign || '',
+        thumb:   ch.thumb || null,
+        plexKey: plexByNumber.get(num) || null,
+      };
+    });
     guideCache     = { channels };
     guideFetchedAt = now;
     return guideCache;
