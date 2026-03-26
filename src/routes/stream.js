@@ -404,14 +404,30 @@ router.get('/debug/livetv-probe', async (req, res) => {
 
   const headers = { Accept: 'application/json', 'X-Plex-Token': PLEX_TOKEN };
 
-  // First, explore what endpoints exist to find a proper channel ratingKey
+  // Explore endpoints to find proper channel key / session flow
   const explore = {};
-  for (const ep of ['/livetv/channels', '/media/providers', '/livetv/sessions']) {
+  for (const ep of ['/livetv/channels', '/livetv/dvrs/4', '/livetv/dvrs/4/channels', '/media/providers']) {
     try {
       const r = await axios.get(`${LIVETV_PLEX_URL}${ep}`, { headers, validateStatus: () => true, timeout: 5000 });
-      explore[ep] = { status: r.status, body: JSON.stringify(r.data).slice(0, 500) };
+      explore[ep] = { status: r.status, body: JSON.stringify(r.data).slice(0, 800) };
     } catch (e) {
       explore[ep] = { error: e.message };
+    }
+  }
+
+  // Try creating a live TV session (POST), which may be required before transcoding
+  const sessionAttempts = {};
+  for (const [label, params] of [
+    ['channelKey', { channelID: channelId, deviceID: '1' }],
+    ['lineupId',   { channelID: lineup,    deviceID: '1' }],
+  ]) {
+    try {
+      const r = await axios.post(`${LIVETV_PLEX_URL}/livetv/sessions`, null, {
+        headers, params: { ...params, 'X-Plex-Token': PLEX_TOKEN }, validateStatus: () => true, timeout: 5000,
+      });
+      sessionAttempts[label] = { status: r.status, body: JSON.stringify(r.data).slice(0, 500) };
+    } catch (e) {
+      sessionAttempts[label] = { error: e.message };
     }
   }
 
@@ -453,7 +469,7 @@ router.get('/debug/livetv-probe', async (req, res) => {
       transcodeResults[path] = { error: e.message };
     }
   }
-  res.json({ localPlexUrl: LIVETV_PLEX_URL, explore, transcodeResults });
+  res.json({ localPlexUrl: LIVETV_PLEX_URL, explore, sessionAttempts, transcodeResults });
 });
 
 // ── Temporary debug: inspect raw /livetv/channels and EPG data ──
