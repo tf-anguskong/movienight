@@ -395,22 +395,23 @@ router.get('/proxy/*', async (req, res) => {
 
 // ── Temporary debug: inspect raw /livetv/channels and EPG data ──
 router.get('/debug/livetv', async (req, res) => {
+  const LTHOST  = process.env.LIVETV_PLEX_HOST  || PLEX_URL;
+  const LTTOKEN = process.env.LIVETV_PLEX_TOKEN || PLEX_TOKEN;
   try {
-    const headers = { Accept: 'application/json', 'X-Plex-Token': PLEX_TOKEN };
-    const axios2 = require('axios');
-    const dvrsRes = await axios2.get(`${PLEX_URL}/livetv/dvrs`, { headers, timeout: 10000 });
-    const epgId = dvrsRes.data?.MediaContainer?.Dvr?.[0]?.epgIdentifier;
-    const [plexRes, epgRes] = await Promise.all([
-      axios2.get(`${PLEX_URL}/livetv/channels`, { headers, timeout: 10000 }).catch(e => ({ error: e.message })),
+    const headers = { Accept: 'application/json', 'X-Plex-Token': LTTOKEN };
+    const dvrsRes = await axios.get(`${LTHOST}/livetv/dvrs`, { headers, timeout: 10000 });
+    const dvr     = dvrsRes.data?.MediaContainer?.Dvr?.[0];
+    const epgId   = dvr?.epgIdentifier;
+    const [plexChRes, epgRes] = await Promise.all([
+      axios.get(`${LTHOST}/livetv/channels`, { headers, timeout: 10000 }).catch(e => ({ error: e.message, status: e.response?.status })),
       epgId
-        ? axios2.get(`${PLEX_URL}/${epgId}/lineups/dvr/channels`, { headers, timeout: 10000 }).catch(e => ({ error: e.message }))
+        ? axios.get(`${LTHOST}/${epgId}/lineups/dvr/channels`, { headers, timeout: 10000 }).catch(e => ({ error: e.message }))
         : Promise.resolve({ data: null }),
     ]);
-    res.json({
-      epgId,
-      plexChannels: plexRes.data ?? plexRes,
-      epgChannels: epgRes.data ?? epgRes,
-    });
+    // Return first 3 channels of each so we can see all fields without huge payload
+    const epgChannels   = epgRes.data?.MediaContainer?.Channel?.slice(0, 3)   ?? epgRes;
+    const plexChannels  = plexChRes.data?.MediaContainer?.Channel?.slice(0, 3) ?? plexChRes;
+    res.json({ epgId, dvr, plexChannels, epgChannels });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
