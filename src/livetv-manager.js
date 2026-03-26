@@ -54,7 +54,7 @@ function startFfmpeg(channel) {
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
-    '-c:v', 'copy',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
     '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
     '-f', 'hls',
     '-hls_time', '2',
