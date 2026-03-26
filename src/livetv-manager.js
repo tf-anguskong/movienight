@@ -102,18 +102,20 @@ async function getGuide() {
   try {
     const headers = { Accept: 'application/json' };
     if (PLEX_TOKEN) headers['X-Plex-Token'] = PLEX_TOKEN;
-    const { data } = await axios.get(`${PLEX_HOST}/livetv/dvrs`, { headers, timeout: 10000 });
-    const channels = [];
-    for (const dvr of data?.MediaContainer?.Dvr || []) {
-      for (const ch of dvr?.Device?.Channel || []) {
-        channels.push({
-          number: ch.channelNumber || '',
-          title:  ch.channelTitle  || ch.channelCallSign || '',
-          thumb:  ch.thumb || null,
-        });
-      }
-    }
-    guideCache    = { channels };
+
+    // Step 1: get the EPG provider identifier from the first DVR entry
+    const dvrsRes = await axios.get(`${PLEX_HOST}/livetv/dvrs`, { headers, timeout: 10000 });
+    const epgId = dvrsRes.data?.MediaContainer?.Dvr?.[0]?.epgIdentifier;
+    if (!epgId) throw new Error('No DVR/EPG identifier found');
+
+    // Step 2: fetch the channel list from the EPG provider
+    const { data } = await axios.get(`${PLEX_HOST}/${epgId}/lineups/dvr/channels`, { headers, timeout: 10000 });
+    const channels = (data?.MediaContainer?.Channel || []).map(ch => ({
+      number: ch.vcn   || '',
+      title:  ch.title || ch.callSign || '',
+      thumb:  ch.thumb || null,
+    }));
+    guideCache     = { channels };
     guideFetchedAt = now;
     return guideCache;
   } catch (err) {
