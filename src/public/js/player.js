@@ -362,8 +362,8 @@ function loadLiveTv(channel) {
     hlsInstance = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
-      liveSyncDuration: 3,        // target 3s behind live edge — keeps all viewers aligned
-      liveMaxLatencyDuration: 8,  // auto-seek forward if >8s behind (late joiners, buffering)
+      liveSyncDuration: 1,        // stay close to the server-delayed live edge
+      liveMaxLatencyDuration: 5,  // resync if >5s behind delayed edge
       liveBackBufferLength: 30,   // retain 30s back-buffer so pause/resume doesn't lose data
     });
     hlsInstance.loadSource(src);
@@ -431,25 +431,21 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Drift correction during live TV playback (mirrors movie room logic)
+  // Drift correction — manifest is the source of truth; nudge toward the delayed live edge
   if (state.playing && !video.paused) {
-    const elapsed   = (Date.now() - state.lastUpdate) / 1000;
-    const serverPos = state.position + elapsed;
-    // Never target older than the live edge — live buffer is finite
-    const liveEdge   = hlsInstance?.liveSyncPosition ?? null;
-    const targetTime = (liveEdge !== null && serverPos < liveEdge) ? liveEdge : serverPos;
-
-    const drift    = video.currentTime - targetTime;
-    const absDrift = Math.abs(drift);
-
-    if (absDrift > 5) {
-      isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-      video.currentTime = targetTime;
-      releaseSyncLock();
-    } else if (absDrift > 0.5) {
-      video.playbackRate = drift > 0 ? 0.95 : 1.05;
-    } else {
-      if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+    const liveEdge = hlsInstance?.liveSyncPosition ?? null;
+    if (liveEdge !== null) {
+      const drift = video.currentTime - liveEdge;
+      if (drift < -4) {
+        // Too far behind the delayed live edge — snap forward
+        isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
+        video.currentTime = liveEdge;
+        releaseSyncLock();
+      } else if (Math.abs(drift) > 0.5) {
+        video.playbackRate = drift > 0 ? 0.95 : 1.05;
+      } else {
+        if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+      }
     }
   }
 
