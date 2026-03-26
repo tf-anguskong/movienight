@@ -429,6 +429,28 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
+  // Drift correction during live TV playback (mirrors movie room logic)
+  if (state.playing && !video.paused) {
+    const elapsed   = (Date.now() - state.lastUpdate) / 1000;
+    const serverPos = state.position + elapsed;
+    // Never target older than the live edge — live buffer is finite
+    const liveEdge   = hlsInstance?.liveSyncPosition ?? null;
+    const targetTime = (liveEdge !== null && serverPos < liveEdge) ? liveEdge : serverPos;
+
+    const drift    = video.currentTime - targetTime;
+    const absDrift = Math.abs(drift);
+
+    if (absDrift > 5) {
+      isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
+      video.currentTime = targetTime;
+      releaseSyncLock();
+    } else if (absDrift > 0.5) {
+      video.playbackRate = drift > 0 ? 0.95 : 1.05;
+    } else {
+      if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+    }
+  }
+
   if (guideOpen) renderGuide(); // re-highlight active channel
 }
 
@@ -547,9 +569,8 @@ function showNotif(text) {
 
 // ── Position reporting (for drift indicator) ───────────────
 setInterval(() => {
-  if (roomType === 'livetv') return; // live TV has no position to report
   let pos = null;
-  if ((roomType === 'movie' || roomType === 'tv') && currentKey && !video.paused && !video.ended) {
+  if ((roomType === 'movie' || roomType === 'tv' || roomType === 'livetv') && currentKey && !video.paused && !video.ended) {
     pos = video.currentTime;
   } else if (roomType === 'youtube' && ytPlayer && ytVideoId) {
     if (ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING) {
@@ -804,10 +825,10 @@ video.addEventListener('click', () => {
   if (roomType !== 'livetv') return;
   if (video.paused) {
     video.play().catch(() => {});
-    socket.emit('play', { position: 0 });
+    socket.emit('play', { position: video.currentTime });
   } else {
     video.pause();
-    socket.emit('pause', { position: 0 });
+    socket.emit('pause', { position: video.currentTime });
   }
 });
 
