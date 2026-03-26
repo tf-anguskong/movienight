@@ -35,7 +35,7 @@ function clearHls() {
 
 function stopFfmpeg() {
   if (ffmpegProc) {
-    ffmpegProc.kill('SIGTERM');
+    ffmpegProc.kill('SIGKILL');
     ffmpegProc = null;
   }
 }
