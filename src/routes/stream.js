@@ -297,8 +297,9 @@ router.get('/hls/livetv/:roomId/:channelId/master.m3u8', async (req, res) => {
       .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
       .join('&');
 
-    console.log(`[LiveTV HLS] Starting Plex session for channel ${channelId}`);
-    const plexRes = await axios.get(`${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`, {
+    const transcodeUrl = `${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`;
+    console.log(`[LiveTV HLS] Starting Plex session for channel ${channelId}, path=${plexPath}, url=`, transcodeUrl.replace(PLEX_TOKEN, 'REDACTED'));
+    const plexRes = await axios.get(transcodeUrl, {
       headers: {
         Accept: 'application/x-mpegURL',
         'X-Plex-Client-Identifier': CLIENT_ID,
@@ -391,6 +392,52 @@ router.get('/proxy/*', async (req, res) => {
       res.status(status).send('Proxy error');
     }
   }
+});
+
+// ── Temporary debug: probe transcode path formats for live TV ──
+// Usage: /api/stream/debug/livetv-probe?channelId=<epg-id>&lineup=4.1
+router.get('/debug/livetv-probe', async (req, res) => {
+  const { channelId, lineup } = req.query;
+  if (!channelId || !lineup) return res.status(400).json({ error: 'channelId and lineup required' });
+
+  const paths = [
+    `/livetv/timelines/${lineup}`,
+    `/livetv/channels/${lineup}`,
+    `/livetv/timelines/${channelId}`,
+  ];
+
+  const results = {};
+  for (const path of paths) {
+    const params = {
+      'X-Plex-Token': PLEX_TOKEN,
+      'X-Plex-Client-Identifier': CLIENT_ID,
+      'X-Plex-Session-Identifier': `mn-probe-${Date.now()}`,
+      'X-Plex-Product': 'Movie Night',
+      'X-Plex-Platform': 'Chrome',
+      hasMDE: '1',
+      path,
+      videoResolution: '1920x1080',
+      maxVideoBitrate: '8000',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      protocol: 'hls',
+      copyts: '1',
+      mediaIndex: '0',
+    };
+    const qs = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
+      .join('&');
+    try {
+      const r = await axios.get(`${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`, {
+        headers: { Accept: 'application/x-mpegURL', 'X-Plex-Token': PLEX_TOKEN },
+        validateStatus: () => true,
+      });
+      results[path] = { status: r.status, body: typeof r.data === 'string' ? r.data.slice(0, 200) : r.data };
+    } catch (e) {
+      results[path] = { error: e.message };
+    }
+  }
+  res.json(results);
 });
 
 // ── Temporary debug: inspect raw /livetv/channels and EPG data ──
