@@ -100,8 +100,8 @@ let nowPlayingFetchedAt = 0;
 
 async function initMediasoup() {
   await resolveAnnouncedIp();
-  const rtcMinPort = parseInt(process.env.WEBRTC_PORT_MIN) || 40000;
-  const rtcMaxPort = parseInt(process.env.WEBRTC_PORT_MAX) || 40100;
+  const rtcMinPort = parseInt(process.env.WEBRTC_PORT_MIN) || 30000;
+  const rtcMaxPort = parseInt(process.env.WEBRTC_PORT_MAX) || 30100;
   worker = await mediasoup.createWorker({ logLevel: 'warn', rtcMinPort, rtcMaxPort });
   worker.on('died', () => {
     console.error('[LiveTV] mediasoup worker died — restarting');
