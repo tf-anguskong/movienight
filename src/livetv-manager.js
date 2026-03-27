@@ -212,8 +212,7 @@ async function startFfmpeg(channel) {
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     ...(useHw
-      ? ['-autorotate', '0',
-         '-c:v', 'h264_vaapi',
+      ? ['-c:v', 'h264_vaapi',
          '-b:v', '6M', '-maxrate', '6M', '-bufsize', '6M',
          '-g', '60']
       : ['-c:v', 'libx264', '-preset', 'veryfast',
