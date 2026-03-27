@@ -90,7 +90,7 @@ class Room {
       lastUpdate: Date.now(),
       settings: this.settings,
       intermissionEndsAt: this.intermissionEndsAt || null,
-      liveTvEdgeOffset: this._liveTvEdgeOffset ?? null
+      liveTvTargetTime: this._liveTvTargetTime ?? null
     };
   }
 
@@ -191,11 +191,10 @@ function setupSync(io, enabledRoomTypes) {
     rooms.forEach(room => {
       if (room.roomType !== 'livetv') return;
       if (room.viewers.size > 0 && liveTvManager) liveTvManager.heartbeat();
-      // Broadcast host's offset from their live edge — guests apply this to their own edge
-      const hostViewer = room.viewers.get(room.hostSocketId);
-      if (hostViewer?.liveEdgeOffset != null) {
-        room._liveTvEdgeOffset = hostViewer.liveEdgeOffset;
-      }
+      // Server-authoritative live edge target for inter-viewer sync
+      const livetvRoute = require('./routes/livetv');
+      const targetTime = livetvRoute.getLiveEdgeTime?.();
+      if (targetTime != null) room._liveTvTargetTime = targetTime;
       if (room.playing && room.viewers.size > 1) {
         room.broadcastState(io);
         room.broadcastViewers(io);
@@ -599,7 +598,7 @@ function setupSync(io, enabledRoomTypes) {
     });
 
     // ── Position report (for drift display) ───────────────
-    socket.on('position-report', ({ position, liveEdgeOffset }) => {
+    socket.on('position-report', ({ position }) => {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
       if (!positionLimiter.allow(socket.id)) return;
@@ -608,10 +607,6 @@ function setupSync(io, enabledRoomTypes) {
       if (typeof position !== 'number' || !isFinite(position) || position < 0) return;
       viewer.reportedTime = position;
       viewer.reportedAt   = Date.now();
-      // Store host's live edge offset for live TV sync
-      if (typeof liveEdgeOffset === 'number' && isFinite(liveEdgeOffset)) {
-        viewer.liveEdgeOffset = liveEdgeOffset;
-      }
     });
 
     // ── Buffering state ────────────────────────────────────

@@ -458,12 +458,11 @@ function applyLiveTvState(state) {
     loadLiveTv(state.liveTvChannel);
   }
 
-  // Sync play/pause state — on resume, snap to live edge matching host's offset
+  // Sync play/pause state — on resume, snap to server-computed live edge
   if (state.playing && video.paused) {
     isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-    const edge = hlsInstance?.liveSyncPosition;
-    if (edge && state.liveTvEdgeOffset != null) video.currentTime = edge + state.liveTvEdgeOffset;
-    else if (edge) video.currentTime = edge;
+    if (state.liveTvTargetTime != null) video.currentTime = state.liveTvTargetTime;
+    else if (hlsInstance?.liveSyncPosition) video.currentTime = hlsInstance.liveSyncPosition;
     video.play().catch(() => showPlayOverlay());
     releaseSyncLock();
   } else if (!state.playing && !video.paused) {
@@ -472,26 +471,22 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Drift correction — guests sync to the host's offset from live edge
-  if (state.playing && !video.paused && !isHost && state.liveTvEdgeOffset != null) {
-    const edge = hlsInstance?.liveSyncPosition;
-    if (edge != null) {
-      const targetTime = edge + state.liveTvEdgeOffset;
-      const drift = video.currentTime - targetTime;
-      if (Math.abs(drift) > 1.0) {
-        // Too far off — hard snap
-        isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-        video.currentTime = targetTime;
-        releaseSyncLock();
-      } else if (Math.abs(drift) > 0.08) {
-        // Gradual correction — scale rate by drift magnitude
-        const rate = Math.abs(drift) > 0.4 ? (drift > 0 ? 0.90 : 1.10)
-                   : Math.abs(drift) > 0.2 ? (drift > 0 ? 0.95 : 1.05)
-                   :                          (drift > 0 ? 0.98 : 1.02);
-        video.playbackRate = rate;
-      } else {
-        if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
-      }
+  // Drift correction — all viewers sync to server-computed target
+  if (state.playing && !video.paused && state.liveTvTargetTime != null) {
+    const drift = video.currentTime - state.liveTvTargetTime;
+    if (Math.abs(drift) > 1.0) {
+      // Too far off — hard snap
+      isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
+      video.currentTime = state.liveTvTargetTime;
+      releaseSyncLock();
+    } else if (Math.abs(drift) > 0.08) {
+      // Gradual correction — scale rate by drift magnitude
+      const rate = Math.abs(drift) > 0.4 ? (drift > 0 ? 0.90 : 1.10)
+                 : Math.abs(drift) > 0.2 ? (drift > 0 ? 0.95 : 1.05)
+                 :                          (drift > 0 ? 0.98 : 1.02);
+      video.playbackRate = rate;
+    } else {
+      if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
     }
   }
 
@@ -626,14 +621,7 @@ setInterval(() => {
       pos = ytPlayer.getCurrentTime?.();
     }
   }
-  if (pos != null && isFinite(pos)) {
-    const report = { position: pos };
-    // For live TV, include offset from local live edge so guests can sync relative to their own edge
-    if (roomType === 'livetv' && hlsInstance?.liveSyncPosition) {
-      report.liveEdgeOffset = pos - hlsInstance.liveSyncPosition;
-    }
-    socket.emit('position-report', report);
-  }
+  if (pos != null && isFinite(pos)) socket.emit('position-report', { position: pos });
 }, 1000);
 
 // ── Buffering state reporting ──────────────────────────────
