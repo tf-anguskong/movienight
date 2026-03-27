@@ -13,6 +13,11 @@ services:
       - sessions:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "video"
+      - "render"
 
 volumes:
   sessions:

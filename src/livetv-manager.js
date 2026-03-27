@@ -45,6 +45,24 @@ function stopFfmpeg() {
   }
 }
 
+// Detect VAAPI support once at startup
+let vaapi = null; // null = untested, true/false = result
+function detectVaapi() {
+  if (vaapi !== null) return Promise.resolve(vaapi);
+  return new Promise((resolve) => {
+    const proc = spawn('vainfo', [], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    proc.stdout.on('data', d => { out += d.toString(); });
+    proc.stderr.on('data', d => { out += d.toString(); });
+    proc.on('close', (code) => {
+      vaapi = code === 0 && /VAEntrypointEncSlice/.test(out);
+      console.log(`[LiveTV] VAAPI hw encode: ${vaapi ? 'available' : 'not available'}`);
+      resolve(vaapi);
+    });
+    proc.on('error', () => { vaapi = false; resolve(false); });
+  });
+}
+
 // Cache probe results so subsequent switches to the same channel skip the probe
 const codecCache = new Map();
 
@@ -73,14 +91,26 @@ function probeVideoCodec(url) {
   });
 }
 
-function buildArgs(url, canCopy) {
-  const videoArgs = canCopy
-    ? ['-c:v', 'copy']
-    : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23'];
+function buildArgs(url, canCopy, useVaapi) {
+  let inputArgs, videoArgs;
+
+  if (canCopy) {
+    inputArgs = [];
+    videoArgs = ['-c:v', 'copy'];
+  } else if (useVaapi) {
+    // VAAPI hardware decode + encode: near-zero CPU
+    inputArgs = ['-hwaccel', 'vaapi', '-hwaccel_device', '/dev/dri/renderD128', '-hwaccel_output_format', 'vaapi'];
+    videoArgs = ['-c:v', 'h264_vaapi', '-qp', '23'];
+  } else {
+    inputArgs = [];
+    videoArgs = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23'];
+  }
+
   return [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+discardcorrupt',
     '-analyzeduration', '10M', '-probesize', '10M',
+    ...inputArgs,
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     ...videoArgs,
@@ -94,7 +124,7 @@ function buildArgs(url, canCopy) {
   ];
 }
 
-async function startFfmpeg(channel) {
+async function startFfmpeg(channel, forceSwEncode) {
   stopFfmpeg();
   clearHls();
   currentChan = channel;
@@ -109,15 +139,30 @@ async function startFfmpeg(channel) {
     if (codec) codecCache.set(channel, codec);
   }
 
-  const canCopy = codec === 'h264';
-  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} (codec=${codec || 'unknown'}, ${canCopy ? 'copy' : 'transcode'}) — ${url}`);
+  const canCopy  = codec === 'h264';
+  const useVaapi = !canCopy && !forceSwEncode && await detectVaapi();
+  const mode     = canCopy ? 'copy' : useVaapi ? 'vaapi' : 'software';
+  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} (codec=${codec || 'unknown'}, mode=${mode}) — ${url}`);
 
-  const args = buildArgs(url, canCopy);
-  ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
+  const args = buildArgs(url, canCopy, useVaapi);
+  ffmpegProc = spawn('ffmpeg', args, { stdio: ['inherit', 'inherit', 'pipe'] });
+
+  let stderr = '';
+  ffmpegProc.stderr.on('data', d => { stderr += d.toString(); });
+
   ffmpegProc.on('exit', (code) => {
     console.log(`[LiveTV] ffmpeg exited (code=${code})`);
     if (ffmpegProc) {
       ffmpegProc = null;
+
+      // If VAAPI failed, fall back to software encoding
+      if (useVaapi && code !== 0) {
+        console.log(`[LiveTV] VAAPI encode failed, falling back to software`);
+        vaapi = false;
+        setTimeout(() => { if (currentChan) startFfmpeg(currentChan, true); }, 1000);
+        return;
+      }
+
       setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 3000);
     }
   });
