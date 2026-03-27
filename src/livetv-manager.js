@@ -232,13 +232,23 @@ async function startFfmpeg(channel) {
   console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url} (video:${videoPort} audio:${audioPort}, encoder:${useHw ? 'h264_vaapi' : 'libx264'}, gop:${gopSize})`);
 
   // Build video filter chain based on probe results
-  const vfFilters = [];
+  const needFpsDrop = probe.fps > 40;
+  const fpsFilterVal = `${Math.round(outputFps * 1000)}/1001`;
+  let vfArg = null;
+
   if (useHw) {
-    if (probe.interlaced) vfFilters.push('deinterlace_vaapi');
-    if (probe.fps > 40) vfFilters.push(`scale_vaapi=framerate=${Math.round(outputFps * 1000)}/1001`);
+    const parts = [];
+    if (probe.interlaced) parts.push('deinterlace_vaapi');
+    if (needFpsDrop) {
+      // Download from GPU → fps filter on CPU → upload back to GPU
+      parts.push('hwdownload', 'format=nv12', `fps=fps=${fpsFilterVal}`, 'hwupload');
+    }
+    if (parts.length) vfArg = parts.join(',');
   } else {
-    if (probe.interlaced) vfFilters.push('yadif');
-    if (probe.fps > 40) vfFilters.push(`fps=fps=${Math.round(outputFps * 1000)}/1001`);
+    const parts = [];
+    if (probe.interlaced) parts.push('yadif');
+    if (needFpsDrop) parts.push(`fps=fps=${fpsFilterVal}`);
+    if (parts.length) vfArg = parts.join(',');
   }
 
   const args = [
@@ -250,7 +260,7 @@ async function startFfmpeg(channel) {
     '-i', url,
     // Video output
     '-map', '0:v:0',
-    ...(vfFilters.length ? ['-vf', vfFilters.join(',')] : []),
+    ...(vfArg ? ['-vf', vfArg] : []),
     ...(useHw
       ? ['-c:v', 'h264_vaapi']
       : ['-c:v', 'libx264', '-preset', 'veryfast']),
