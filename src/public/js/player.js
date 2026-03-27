@@ -391,7 +391,7 @@ async function loadLiveTv(channel) {
     mediaConsumers.forEach(c => {
       const receiver = c.rtpReceiver;
       if (receiver && 'playoutDelayHint' in receiver) {
-        receiver.playoutDelayHint = 1.0; // 1s buffer — all viewers apply the same delay so relative sync is unaffected
+        receiver.playoutDelayHint = 10.0; // 10s buffer — all viewers apply the same delay so relative sync is unaffected
       }
     });
     video.srcObject = new MediaStream(mediaConsumers.map(c => c.track));
