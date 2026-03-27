@@ -2,7 +2,12 @@ FROM node:20-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+      intel-media-va-driver-non-free \
+      libmfx1 \
+      vainfo \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm install
