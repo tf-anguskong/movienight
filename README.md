@@ -19,6 +19,7 @@ A Plex user creates a room, shares an invite link, and guests join straight from
 - **Plex HLS proxy** — transcodes via your local Plex server and routes all HLS traffic through the app server, so your Plex token is never exposed to clients
 - **Movie browser** — searchable, filterable (genre, rating, year) grid of your Plex library, host-only
 - **YouTube rooms** — create a YouTube room instead of a movie room; the host pastes any `youtube.com` or `youtu.be` URL and the video embeds for all viewers via the YouTube IFrame API, fully synchronised; the video title is fetched automatically and shown in the sidebar and room list
+- **Live TV rooms** — watch live TV together from an HDHomeRun tuner; all viewers receive the same WebRTC stream simultaneously via a mediasoup SFU, giving <50ms variance and ~200ms latency; includes a TV guide panel with EPG data from Plex and a channel switcher for the host
 - **Multi-room** — multiple watch parties can run simultaneously, each with their own state
 
 ### Rooms & Access
@@ -56,7 +57,7 @@ A Plex user creates a room, shares an invite link, and guests join straight from
 
 - **Backend** — Node.js, Express, Socket.io
 - **Frontend** — vanilla JS, no framework
-- **Streaming** — Plex HLS transcoding proxied server-side; [HLS.js](https://github.com/video-dev/hls.js) on the client
+- **Streaming** — Plex HLS transcoding proxied server-side; [HLS.js](https://github.com/video-dev/hls.js) on the client; live TV via [mediasoup](https://mediasoup.org/) SFU (WebRTC) with ffmpeg RTP ingest
 - **Auth** — Plex PIN-based OAuth for Plex users; session-based guest tokens for invited viewers
 - **Sessions** — `express-session` with `session-file-store`
 - **Deployment** — Docker + reverse proxy of your choice
@@ -124,6 +125,8 @@ server {
 
 Set `APP_URL` to your domain and `COOKIE_SECURE=true` in `.env`.
 
+> **Live TV + WebRTC note:** WebRTC ICE uses UDP directly between the server and each browser — it does not go through NGINX. Ensure UDP ports are reachable from clients. For viewers outside your LAN, set `WEBRTC_ANNOUNCED_IP` to your server's public IP so ICE candidates advertise the right address.
+
 > **Tip:** [NGINX Proxy Manager](https://nginxproxymanager.com/) provides a web UI that handles proxy hosts, SSL certificates (via Let's Encrypt), and WebSocket support with minimal configuration. It runs as a Docker container and is a popular choice for home lab setups.
 
 ---
@@ -153,6 +156,46 @@ Copy `.env.example` to `.env` and fill in the values:
 | `PLEX_CLIENT_ID` | No | Identifier sent to Plex — any stable string (default: `movienight-app`) |
 | `DEFAULT_TIMEZONE` | No | IANA timezone used as the default when scheduling rooms (e.g. `America/New_York`). Falls back to `UTC`. |
 | `PORT` | No | Port to listen on (default: `3000`) |
+
+### Live TV (optional)
+
+| Variable | Required | Description |
+|---|---|---|
+| `ROOM_TYPE_LIVETV` | — | Set to `true` to enable Live TV rooms (default: `false`) |
+| `HDHR_IP` | Yes (if livetv) | LAN IP of your HDHomeRun tuner |
+| `HDHR_PORT` | No | HDHomeRun HTTP port (default: `5004`) |
+| `LIVETV_PLEX_HOST` | Yes (if livetv) | Plex server URL used for EPG guide data — can be the same as `PLEX_URL` |
+| `LIVETV_PLEX_TOKEN` | No | Plex token for the EPG server. Falls back to `PLEX_TOKEN` if unset. |
+| `LIVETV_DEFAULT_CHANNEL` | No | Channel to start on when a Live TV room is first created |
+| `WEBRTC_ANNOUNCED_IP` | No | Public IP (or hostname) advertised in WebRTC ICE candidates. Required for viewers outside the LAN. Falls back to the hostname in `APP_URL`. |
+
+---
+
+## Live TV setup
+
+Live TV rooms stream from an [HDHomeRun](https://www.silicondust.com/) tuner on your LAN. The server runs ffmpeg to transcode the MPEG-TS stream into RTP, feeds it into a [mediasoup](https://mediasoup.org/) SFU, and delivers it to every viewer simultaneously via WebRTC. Because all browsers receive the same encoded packets at the same time, sync variance is structural — typically <50ms — with no drift correction math required.
+
+### Requirements
+
+- HDHomeRun tuner accessible on your LAN
+- Plex Media Server with a Live TV / DVR setup (used for EPG guide data)
+- `ROOM_TYPE_LIVETV=true` in `.env`
+
+### How it works
+
+1. The host creates a Live TV room and picks a channel from the guide
+2. The server starts an ffmpeg process that pulls the channel from the HDHomeRun and outputs two RTP streams (H.264 video + Opus audio) into mediasoup
+3. Each browser that joins performs a WebRTC handshake with the server and receives a consumer stream
+4. The video plays directly in the browser's `<video>` element via `srcObject` — no HLS buffering, no manifest polling, no per-client drift
+5. When the host switches channels, all clients are disconnected and reconnect automatically to the new stream
+
+### Network note
+
+WebRTC media (UDP) flows directly between the server and each browser — it does **not** pass through NGINX. If viewers are connecting from outside your LAN:
+- Set `WEBRTC_ANNOUNCED_IP` to your server's public IP
+- Ensure the ephemeral UDP port range your server uses is reachable from the internet (mediasoup defaults to a random high port per transport; you can constrain this range at the OS level if needed)
+
+TURN server support is not currently included. For a home LAN use case this is rarely needed.
 
 ---
 
