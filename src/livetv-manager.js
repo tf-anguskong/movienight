@@ -212,8 +212,7 @@ async function startFfmpeg(channel) {
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     ...(useHw
-      ? ['-vf', 'deinterlace_vaapi=rate=field,scale_vaapi=w=1920:h=1080',
-         '-r', '30', '-vsync', 'cfr',
+      ? ['-vf', 'deinterlace_vaapi,scale_vaapi=w=1920:h=1080',
          '-c:v', 'h264_vaapi',
          '-b:v', '6M', '-maxrate', '6M', '-bufsize', '6M',
          '-g', '30']
