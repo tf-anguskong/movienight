@@ -210,7 +210,7 @@ async function startFfmpeg(channel) {
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     // No -tune zerolatency: allow x264 lookahead for smooth rate control
-    '-c:v', 'libx264', '-preset', 'fast',
+    '-c:v', 'libx264', '-preset', 'veryfast',
     '-b:v', '6M', '-maxrate', '6M', '-bufsize', '6M',
     '-bsf:v', 'dump_extra',
     '-g', '30',
