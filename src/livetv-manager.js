@@ -59,7 +59,7 @@ function startFfmpeg(channel) {
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
-    '-c:v', 'copy', '-bsf:v', 'h264_mp4toannexb',
+    '-c:v', 'copy',
     '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'aresample=async=1000',
     '-f', 'hls',
     '-hls_time', '4',
