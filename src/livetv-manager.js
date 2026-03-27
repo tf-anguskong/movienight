@@ -225,16 +225,20 @@ async function startFfmpeg(channel) {
 
   // Probe stream to detect interlacing, resolution, framerate
   const probe = await probeChannel(url);
-  const gopSize = Math.round(probe.fps) || 30; // ~1 keyframe per second
-  console.log(`[LiveTV] Probe: ${probe.width}x${probe.height} ${probe.fps}fps ${probe.interlaced ? 'interlaced' : 'progressive'}`);
+  // Cap output at ~30fps — WebRTC/browsers drop 30%+ frames at 60fps
+  const outputFps = probe.fps > 40 ? probe.fps / 2 : probe.fps;
+  const gopSize = Math.round(outputFps) || 30; // ~1 keyframe per second
+  console.log(`[LiveTV] Probe: ${probe.width}x${probe.height} ${probe.fps}fps ${probe.interlaced ? 'interlaced' : 'progressive'} → output ${outputFps.toFixed(2)}fps`);
   console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url} (video:${videoPort} audio:${audioPort}, encoder:${useHw ? 'h264_vaapi' : 'libx264'}, gop:${gopSize})`);
 
   // Build video filter chain based on probe results
   const vfFilters = [];
   if (useHw) {
     if (probe.interlaced) vfFilters.push('deinterlace_vaapi');
+    if (probe.fps > 40) vfFilters.push(`scale_vaapi=framerate=${Math.round(outputFps * 1000)}/1001`);
   } else {
     if (probe.interlaced) vfFilters.push('yadif');
+    if (probe.fps > 40) vfFilters.push(`fps=fps=${Math.round(outputFps * 1000)}/1001`);
   }
 
   const args = [
