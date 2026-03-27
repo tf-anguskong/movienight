@@ -390,6 +390,13 @@ function setupSync(io, enabledRoomTypes) {
       console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel}`);
     });
 
+    // ── Join live TV stream (subscribe to fMP4 fragments) ──
+    socket.on('livetv-join', () => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || room.roomType !== 'livetv') return;
+      if (liveTvManager) liveTvManager.addClient(socket);
+    });
+
     // ── Playback (anyone in room, unless locked) ───────────
     socket.on('play', ({ position }) => {
       const room = socketToRoom.get(socket.id);
@@ -612,7 +619,7 @@ function setupSync(io, enabledRoomTypes) {
       chatLimiter.delete(socket.id);
       reactionLimiter.delete(socket.id);
       seekLimiter.delete(socket.id);
-      if (liveTvManager) liveTvManager.closeConsumer(socket.id);
+      if (liveTvManager) liveTvManager.removeClient(socket);
       const room = socketToRoom.get(socket.id);
       socketToRoom.delete(socket.id);
       if (!room) return;

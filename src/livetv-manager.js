@@ -5,7 +5,6 @@ const fs         = require('fs');
 const path       = require('path');
 const os         = require('os');
 const axios      = require('axios');
-const mediasoup  = require('mediasoup');
 
 const HLS_DIR          = process.env.LIVETV_HLS_DIR || path.join(os.tmpdir(), 'livetv-hls');
 const HDHR_IP          = process.env.HDHR_IP || '';
@@ -16,79 +15,13 @@ const PLEX_TOKEN       = process.env.LIVETV_PLEX_TOKEN || process.env.PLEX_TOKEN
 const GUIDE_TTL_MS       = 300_000;
 const NOW_PLAYING_TTL_MS = 120_000;
 
-// Resolved at initMediasoup time and refreshed periodically; used by createWebRtcTransport
-let resolvedAnnouncedIp = null;
-let ipResolvedAt        = 0;
-const IP_REFRESH_MS     = 300_000; // re-check public IP every 5 minutes
-
-async function resolveAnnouncedIp() {
-  // Static override — never auto-refresh
-  if (process.env.WEBRTC_ANNOUNCED_IP) {
-    resolvedAnnouncedIp = process.env.WEBRTC_ANNOUNCED_IP;
-    ipResolvedAt = Date.now();
-    console.log(`[LiveTV] WebRTC announced IP: ${resolvedAnnouncedIp} (from WEBRTC_ANNOUNCED_IP)`);
-    return;
-  }
-  try {
-    const res = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
-    const newIp = res.data.ip;
-    if (newIp !== resolvedAnnouncedIp) {
-      console.log(`[LiveTV] WebRTC announced IP: ${newIp} (auto-detected${resolvedAnnouncedIp ? `, was ${resolvedAnnouncedIp}` : ''})`);
-    }
-    resolvedAnnouncedIp = newIp;
-    ipResolvedAt = Date.now();
-  } catch {
-    // Keep existing IP if we have one; only fall back if this is the first resolve
-    if (resolvedAnnouncedIp) {
-      console.warn('[LiveTV] Public IP refresh failed — keeping current:', resolvedAnnouncedIp);
-      return;
-    }
-    try {
-      resolvedAnnouncedIp = new URL(process.env.APP_URL || 'http://localhost').hostname;
-    } catch {
-      resolvedAnnouncedIp = '127.0.0.1';
-    }
-    ipResolvedAt = Date.now();
-    console.warn(`[LiveTV] Could not auto-detect public IP — falling back to "${resolvedAnnouncedIp}". ` +
-      'Set WEBRTC_ANNOUNCED_IP to your public IP if WebRTC fails for external viewers.');
-  }
-}
-
-async function getAnnouncedIp() {
-  if (!resolvedAnnouncedIp || (Date.now() - ipResolvedAt >= IP_REFRESH_MS && !process.env.WEBRTC_ANNOUNCED_IP)) {
-    await resolveAnnouncedIp();
-  }
-  return resolvedAnnouncedIp || '127.0.0.1';
-}
-
-const MEDIA_CODECS = [
-  {
-    kind: 'video',
-    mimeType: 'video/H264',
-    clockRate: 90000,
-    parameters: {
-      'packetization-mode': 1,
-      'profile-level-id': '42e01f',
-      'level-asymmetry-allowed': 1,
-    },
-  },
-  { kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 },
-];
-
 let ffmpegProc    = null;
 let currentChan   = null;
 let idleTimer     = null;
 
-// mediasoup state
-let worker        = null;
-let router        = null;
-let videoPlainTransport = null;
-let audioPlainTransport = null;
-let videoProducer = null;
-let audioProducer = null;
-
-// Per-socket WebRtcTransport  socketId → WebRtcTransport
-const clientTransports = new Map();
+// fMP4 broadcast state
+let initSegment   = null;   // Buffer: ftyp + moov
+const clients     = new Set(); // Set of Socket.io sockets
 
 let channelsCache     = null;
 let channelsFetchedAt = 0;
@@ -96,30 +29,66 @@ let cachedEpgId       = null;
 let nowPlayingCache     = null;
 let nowPlayingFetchedAt = 0;
 
-// ── mediasoup init ──────────────────────────────────────────
-
-async function initMediasoup() {
-  await resolveAnnouncedIp();
-  const rtcMinPort = parseInt(process.env.WEBRTC_PORT_MIN) || 30000;
-  const rtcMaxPort = parseInt(process.env.WEBRTC_PORT_MAX) || 30100;
-  worker = await mediasoup.createWorker({ logLevel: 'warn', rtcMinPort, rtcMaxPort });
-  worker.on('died', () => {
-    console.error('[LiveTV] mediasoup worker died — restarting');
-    worker = null; router = null;
-    videoPlainTransport = null; audioPlainTransport = null;
-    videoProducer = null; audioProducer = null;
-    initMediasoup().then(() => {
-      if (currentChan) startFfmpeg(currentChan);
-    }).catch(err => console.error('[LiveTV] mediasoup reinit failed:', err));
-  });
-  router = await worker.createRouter({ mediaCodecs: MEDIA_CODECS });
-  console.log('[LiveTV] mediasoup worker+router ready');
-}
-
-// ── HLS dir (kept for compat, not actively used) ────────────
-
+// ── HLS dir (kept for compat) ────────────────────────────────
 fs.mkdirSync(HLS_DIR, { recursive: true });
 function getHlsDir() { return HLS_DIR; }
+
+// ── fMP4 box parser ──────────────────────────────────────────
+
+function createBoxParser(onInit, onFragment) {
+  let buf = Buffer.alloc(0);
+  let ftypBuf = null;
+
+  return function feed(data) {
+    buf = Buffer.concat([buf, data]);
+
+    while (buf.length >= 8) {
+      const size = buf.readUInt32BE(0);
+      if (size < 8 || size > 50_000_000) {
+        // Corrupt — skip a byte and try to recover
+        buf = buf.subarray(1);
+        continue;
+      }
+      if (buf.length < size) break; // wait for more data
+
+      const type = buf.toString('ascii', 4, 8);
+      const box  = buf.subarray(0, size);
+      buf = buf.subarray(size);
+
+      if (type === 'ftyp') {
+        ftypBuf = Buffer.from(box);
+      } else if (type === 'moov') {
+        // Init segment = ftyp + moov
+        const moov = Buffer.from(box);
+        initSegment = ftypBuf ? Buffer.concat([ftypBuf, moov]) : moov;
+        ftypBuf = null;
+        onInit(initSegment);
+      } else if (type === 'moof') {
+        // Fragment = moof + following mdat
+        // Peek ahead for mdat
+        if (buf.length >= 8) {
+          const mdatSize = buf.readUInt32BE(0);
+          const mdatType = buf.toString('ascii', 4, 8);
+          if (mdatType === 'mdat' && buf.length >= mdatSize) {
+            const mdat = buf.subarray(0, mdatSize);
+            buf = buf.subarray(mdatSize);
+            const fragment = Buffer.concat([box, mdat]);
+            onFragment(fragment);
+          } else {
+            // mdat not complete yet — put moof back and wait
+            buf = Buffer.concat([box, buf]);
+            break;
+          }
+        } else {
+          // Not enough data for mdat header — put moof back
+          buf = Buffer.concat([box, buf]);
+          break;
+        }
+      }
+      // Other box types (styp, sidx, etc.) — skip silently
+    }
+  };
+}
 
 // ── ffmpeg ──────────────────────────────────────────────────
 
@@ -142,17 +111,13 @@ function probeChannel(url) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
     proc.on('close', () => {
       const info = { interlaced: false, width: 0, height: 0, fps: 30 };
-      // Parse resolution: e.g. "1920x1080" or "1280x720"
       const resMatch = stderr.match(/(\d{3,4})x(\d{3,4})/);
       if (resMatch) { info.width = parseInt(resMatch[1]); info.height = parseInt(resMatch[2]); }
-      // Parse fps: e.g. "29.97 fps" or "59.94 fps"
       const fpsMatch = stderr.match(/([\d.]+)\s*fps/);
       if (fpsMatch) info.fps = parseFloat(fpsMatch[1]);
-      // Detect interlaced: "top first" or "bottom first" in stream info
       info.interlaced = /top first|bottom first|tff|bff/i.test(stderr);
       resolve(info);
     });
-    // Timeout after 10 seconds
     setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 10000);
   });
 }
@@ -160,95 +125,28 @@ function probeChannel(url) {
 async function startFfmpeg(channel) {
   stopFfmpeg();
   currentChan = channel;
+  initSegment = null;
 
-  if (!router) {
-    console.error('[LiveTV] mediasoup not ready — cannot start stream');
-    return;
+  // Signal all clients to reset their MSE
+  for (const sock of clients) {
+    try { sock.emit('livetv-reset'); } catch {}
   }
-
-  // Close existing plain transports + producers
-  if (videoProducer) { try { videoProducer.close(); } catch {} videoProducer = null; }
-  if (audioProducer) { try { audioProducer.close(); } catch {} audioProducer = null; }
-  if (videoPlainTransport) { try { videoPlainTransport.close(); } catch {} videoPlainTransport = null; }
-  if (audioPlainTransport) { try { audioPlainTransport.close(); } catch {} audioPlainTransport = null; }
-
-  // Close all existing client WebRtcTransports so they reconnect
-  for (const [sid, t] of clientTransports) {
-    try { t.close(); } catch {}
-    clientTransports.delete(sid);
-  }
-
-  // Create plain transports — comedia:true means mediasoup learns the SSRC from first packet
-  videoPlainTransport = await router.createPlainTransport({
-    listenIp: { ip: '127.0.0.1', announcedIp: null },
-    rtcpMux: true,
-    comedia: true,
-  });
-  audioPlainTransport = await router.createPlainTransport({
-    listenIp: { ip: '127.0.0.1', announcedIp: null },
-    rtcpMux: true,
-    comedia: true,
-  });
-
-  const videoPort = videoPlainTransport.tuple.localPort;
-  const audioPort = audioPlainTransport.tuple.localPort;
-
-  videoProducer = await videoPlainTransport.produce({
-    kind: 'video',
-    rtpParameters: {
-      codecs: [{
-        mimeType: 'video/H264',
-        payloadType: 97,
-        clockRate: 90000,
-        parameters: { 'packetization-mode': 1, 'profile-level-id': '42e01f', 'level-asymmetry-allowed': 1 },
-      }],
-      encodings: [{ ssrc: 1111 }],
-    },
-  });
-
-  audioProducer = await audioPlainTransport.produce({
-    kind: 'audio',
-    rtpParameters: {
-      codecs: [{
-        mimeType: 'audio/opus',
-        payloadType: 100,
-        clockRate: 48000,
-        channels: 2,
-        parameters: { 'sprop-stereo': 1 },
-      }],
-      encodings: [{ ssrc: 2222 }],
-    },
-  });
 
   const url = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
   const useHw = process.env.LIVETV_HW_ACCEL !== 'none';
 
   // Probe stream to detect interlacing, resolution, framerate
   const probe = await probeChannel(url);
-  // Cap output at ~30fps — WebRTC/browsers drop 30%+ frames at 60fps
-  const outputFps = probe.fps > 40 ? probe.fps / 2 : probe.fps;
-  const gopSize = Math.round(outputFps) || 30; // ~1 keyframe per second
-  console.log(`[LiveTV] Probe: ${probe.width}x${probe.height} ${probe.fps}fps ${probe.interlaced ? 'interlaced' : 'progressive'} → output ${outputFps.toFixed(2)}fps`);
-  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url} (video:${videoPort} audio:${audioPort}, encoder:${useHw ? 'h264_vaapi' : 'libx264'}, gop:${gopSize})`);
+  const gopSize = Math.round(probe.fps) || 30;
+  console.log(`[LiveTV] Probe: ${probe.width}x${probe.height} ${probe.fps}fps ${probe.interlaced ? 'interlaced' : 'progressive'}`);
+  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url} (encoder:${useHw ? 'h264_vaapi' : 'libx264'}, gop:${gopSize})`);
 
   // Build video filter chain based on probe results
-  const needFpsDrop = probe.fps > 40;
-  const fpsFilterVal = `${Math.round(outputFps * 1000)}/1001`;
-  let vfArg = null;
-
+  const vfFilters = [];
   if (useHw) {
-    const parts = [];
-    if (probe.interlaced) parts.push('deinterlace_vaapi');
-    if (needFpsDrop) {
-      // Download from GPU → fps filter on CPU → upload back to GPU
-      parts.push('hwdownload', 'format=nv12', `fps=fps=${fpsFilterVal}`, 'hwupload');
-    }
-    if (parts.length) vfArg = parts.join(',');
+    if (probe.interlaced) vfFilters.push('deinterlace_vaapi');
   } else {
-    const parts = [];
-    if (probe.interlaced) parts.push('yadif');
-    if (needFpsDrop) parts.push(`fps=fps=${fpsFilterVal}`);
-    if (parts.length) vfArg = parts.join(',');
+    if (probe.interlaced) vfFilters.push('yadif');
   }
 
   const args = [
@@ -258,26 +156,41 @@ async function startFfmpeg(channel) {
     '-thread_queue_size', '4096',
     ...(useHw ? ['-hwaccel', 'vaapi', '-hwaccel_device', '/dev/dri/renderD128', '-hwaccel_output_format', 'vaapi'] : []),
     '-i', url,
-    // Video output
-    '-map', '0:v:0',
-    ...(vfArg ? ['-vf', vfArg] : []),
+    '-map', '0:v:0', '-map', '0:a:0',
+    ...(vfFilters.length ? ['-vf', vfFilters.join(',')] : []),
     ...(useHw
       ? ['-c:v', 'h264_vaapi']
       : ['-c:v', 'libx264', '-preset', 'veryfast']),
     '-b:v', '6M', '-maxrate', '6M', '-bufsize', '6M',
     '-g', String(gopSize),
-    '-bsf:v', 'dump_extra',
-    '-ssrc', '1111', '-payload_type', '97',
-    '-f', 'rtp', `rtp://127.0.0.1:${videoPort}`,
-    // Audio output
-    '-map', '0:a:0',
-    '-c:a', 'libopus', '-b:a', '128k', '-ac', '2',
+    '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
     '-af', 'aresample=async=1000',
-    '-ssrc', '2222', '-payload_type', '100',
-    '-f', 'rtp', `rtp://127.0.0.1:${audioPort}`,
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-frag_duration', '500000',
+    '-f', 'mp4',
+    'pipe:1',
   ];
 
-  ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
+  ffmpegProc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'inherit'] });
+
+  const parser = createBoxParser(
+    // onInit — new init segment ready
+    (init) => {
+      console.log(`[LiveTV] Init segment ready (${init.length} bytes), ${clients.size} client(s)`);
+      for (const sock of clients) {
+        try { sock.emit('livetv-init', init); } catch {}
+      }
+    },
+    // onFragment — new media fragment
+    (fragment) => {
+      for (const sock of clients) {
+        try { sock.emit('livetv-fragment', fragment); } catch {}
+      }
+    },
+  );
+
+  ffmpegProc.stdout.on('data', parser);
+
   ffmpegProc.on('exit', (code) => {
     console.log(`[LiveTV] ffmpeg exited (code=${code})`);
     if (ffmpegProc) {
@@ -290,7 +203,6 @@ async function startFfmpeg(channel) {
 let switchLock = null;
 async function switchChannel(channel) {
   if (channel === currentChan && ffmpegProc) return;
-  // Serialize — if a switch is already in progress, wait for it then check again
   if (switchLock) await switchLock;
   if (channel === currentChan && ffmpegProc) return;
   switchLock = startFfmpeg(channel);
@@ -311,82 +223,20 @@ function heartbeat() {
   }
 }
 
-// ── WebRTC signaling helpers ────────────────────────────────
+// ── Client management ────────────────────────────────────────
 
-function getRouterCapabilities() {
-  if (!router) throw new Error('mediasoup not ready');
-  return router.rtpCapabilities;
-}
-
-async function createWebRtcTransport(socketId) {
-  if (!router) throw new Error('mediasoup not ready');
-
-  // Close any previous transport for this socket
-  const existing = clientTransports.get(socketId);
-  if (existing) { try { existing.close(); } catch {} }
-
-  const listenIps = [];
-  // LAN IP first — ICE will prefer it for local clients, reducing latency
-  if (process.env.WEBRTC_LAN_IP) {
-    listenIps.push({ ip: '0.0.0.0', announcedIp: process.env.WEBRTC_LAN_IP });
+function addClient(socket) {
+  clients.add(socket);
+  // Send init segment immediately if we have one
+  if (initSegment) {
+    socket.emit('livetv-init', initSegment);
   }
-  listenIps.push({ ip: '0.0.0.0', announcedIp: await getAnnouncedIp() });
-
-  const transport = await router.createWebRtcTransport({
-    listenIps,
-    enableUdp: true,
-    enableTcp: true,
-    preferUdp: true,
-  });
-
-  clientTransports.set(socketId, transport);
-
-  return {
-    id: transport.id,
-    iceParameters: transport.iceParameters,
-    iceCandidates: transport.iceCandidates,
-    dtlsParameters: transport.dtlsParameters,
-  };
+  console.log(`[LiveTV] Client added (${clients.size} total)`);
 }
 
-async function connectWebRtcTransport(socketId, dtlsParameters) {
-  const transport = clientTransports.get(socketId);
-  if (!transport) throw new Error('No transport for socket ' + socketId);
-  await transport.connect({ dtlsParameters });
-}
-
-async function createConsumers(socketId, rtpCapabilities) {
-  const transport = clientTransports.get(socketId);
-  if (!transport) throw new Error('No transport for socket ' + socketId);
-  if (!videoProducer || !audioProducer) throw new Error('No producers — channel not started');
-
-  const results = [];
-  for (const producer of [videoProducer, audioProducer]) {
-    if (!router.canConsume({ producerId: producer.id, rtpCapabilities })) {
-      console.warn(`[LiveTV] Cannot consume ${producer.kind} for socket ${socketId}`);
-      continue;
-    }
-    const consumer = await transport.consume({
-      producerId: producer.id,
-      rtpCapabilities,
-      paused: false,
-    });
-    results.push({
-      id: consumer.id,
-      producerId: producer.id,
-      kind: consumer.kind,
-      rtpParameters: consumer.rtpParameters,
-    });
-  }
-  return results;
-}
-
-function closeConsumer(socketId) {
-  const transport = clientTransports.get(socketId);
-  if (transport) {
-    try { transport.close(); } catch {}
-    clientTransports.delete(socketId);
-  }
+function removeClient(socket) {
+  clients.delete(socket);
+  console.log(`[LiveTV] Client removed (${clients.size} total)`);
 }
 
 // ── Guide / EPG ─────────────────────────────────────────────
@@ -464,15 +314,11 @@ async function getGuide() {
 }
 
 module.exports = {
-  initMediasoup,
   switchChannel,
   heartbeat,
   getGuide,
   stopFfmpeg,
   getHlsDir,
-  getRouterCapabilities,
-  createWebRtcTransport,
-  connectWebRtcTransport,
-  createConsumers,
-  closeConsumer,
+  addClient,
+  removeClient,
 };

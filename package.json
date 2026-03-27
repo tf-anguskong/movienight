@@ -5,8 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "build": "mkdir -p src/public/vendor && esbuild node_modules/mediasoup-client/lib/index.js --bundle --format=iife --global-name=mediasoupClient --platform=browser --minify --outfile=src/public/vendor/mediasoup-client.min.js"
+    "dev": "nodemon src/server.js"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -15,14 +14,11 @@
     "express-rate-limit": "^7.0.0",
     "express-session": "^1.17.3",
     "helmet": "^7.0.0",
-    "mediasoup": "^3.14.0",
-    "mediasoup-client": "^3.18.7",
     "session-file-store": "^1.5.0",
     "socket.io": "^4.6.2",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
     "nodemon": "^3.0.2"
   }
 }

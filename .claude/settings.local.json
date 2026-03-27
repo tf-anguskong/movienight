@@ -2,7 +2,34 @@
   "permissions": {
     "allow": [
       "Bash(git remote:*)",
-      "Bash(git -C \"D:\\\\Claude\\\\movienight\" status && git -C \"D:\\\\Claude\\\\movienight\" diff)"
+      "Bash(git -C \"D:\\\\Claude\\\\movienight\" status && git -C \"D:\\\\Claude\\\\movienight\" diff)",
+      "Bash(cd \"D:\\\\Claude\\\\movienight\" && docker compose logs cloudflared --tail 20)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Radarr/Radarr/develop/frontend/src/Styles/Themes/dark.js\" | head -150)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Radarr/Radarr/develop/frontend/src/Styles/Themes/light.js\" | head -150)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Radarr/Radarr/develop/frontend/src/Styles/Themes/dark.js\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Radarr/Radarr/develop/frontend/src/Styles/Themes/light.js\")",
+      "Bash(find /d/Claude/movienight/src -type f -name \"*.js\" -o -name \"*.json\" | grep -E \"\\(\\\\.js|\\\\.json\\)$\" | head -30)",
+      "Bash(curl -s https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js | openssl dgst -sha384 -binary | base64 2>/dev/null || echo \"FAILED\")",
+      "Bash(cat package-lock.json 2>/dev/null | python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('packages',{}\\).get\\('node_modules/express-rate-limit',{}\\).get\\('version','not installed'\\)\\)\" 2>/dev/null || echo \"no lock file or python\")",
+      "Bash(npm install:*)",
+      "Bash(node --check src/server.js && node --check src/routes/auth.js && node --check src/routes/stream.js && node --check src/sync.js && node --check src/routes/movies.js && echo \"All syntax OK\")",
+      "Bash(node --check src/server.js && node --check src/routes/auth.js && node --check src/routes/stream.js && node --check src/sync.js && echo \"All syntax OK\")",
+      "Bash(node --check src/server.js && node --check src/sync.js && echo \"OK\")",
+      "Bash(gh repo:*)",
+      "Bash(git commit:*)",
+      "Bash(node -e \"const s = require\\('./src/sync.js'\\); console.log\\('sync.js loaded OK'\\)\" 2>&1)",
+      "Bash(node -e \"require\\('./src/server.js'\\)\" 2>&1 | head -5)",
+      "Bash(cd D:/Claude/movienight && node -e \"require\\('./src/sync.js'\\); console.log\\('OK'\\)\" 2>&1)",
+      "Bash(cd \"D:\\\\Claude\\\\movienight\" && node --check src/sync.js && node --check src/public/js/player.js 2>&1 || echo \"SYNTAX ERROR\")",
+      "Bash(docker compose:*)",
+      "Bash(node --check src/livetv-manager.js)",
+      "Bash(node --check src/sync.js)"
     ]
   }
 }

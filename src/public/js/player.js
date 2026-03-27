@@ -16,8 +16,10 @@ let isSyncing        = false;
 let syncTimer        = null;
 let currentKey       = null;
 let hlsInstance      = null;
-let liveTvDevice     = null;
-let liveTvTransport  = null;
+let liveTvMediaSource = null;
+let liveTvSourceBuf   = null;
+let liveTvQueue       = [];
+let liveTvActive      = false;
 let isHost           = false;
 let roomType         = 'movie';
 let roomSettings     = { playbackLocked: false, reactionsEnabled: true };
@@ -354,53 +356,99 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
   }
 }
 
-// ── Live TV player (WebRTC via mediasoup) ───────────────────
-async function loadLiveTv(channel) {
-  if (liveTvTransport) { liveTvTransport.close(); liveTvTransport = null; }
+// ── Live TV player (fMP4 over Socket.io + MSE) ──────────────
+
+function cleanupLiveTv() {
+  liveTvActive = false;
+  liveTvQueue = [];
+  socket.off('livetv-init');
+  socket.off('livetv-fragment');
+  socket.off('livetv-reset');
+  if (liveTvSourceBuf) {
+    try { liveTvSourceBuf.abort(); } catch {}
+    liveTvSourceBuf = null;
+  }
+  if (liveTvMediaSource && liveTvMediaSource.readyState === 'open') {
+    try { liveTvMediaSource.endOfStream(); } catch {}
+  }
+  liveTvMediaSource = null;
+  video.srcObject = null;
+}
+
+function liveTvDrainQueue() {
+  if (!liveTvSourceBuf || liveTvSourceBuf.updating || !liveTvQueue.length) return;
+  try {
+    liveTvSourceBuf.appendBuffer(liveTvQueue.shift());
+  } catch (err) {
+    console.error('[LiveTV] appendBuffer error:', err);
+    // Likely a codec mismatch or QuotaExceeded — reset
+    cleanupLiveTv();
+    setTimeout(() => loadLiveTv(currentKey), 2000);
+  }
+}
+
+function liveTvTrimBuffer() {
+  if (!liveTvSourceBuf || liveTvSourceBuf.updating) return;
+  try {
+    if (liveTvSourceBuf.buffered.length > 0) {
+      const start = liveTvSourceBuf.buffered.start(0);
+      const end   = liveTvSourceBuf.buffered.end(0);
+      if (end - start > 30) {
+        liveTvSourceBuf.remove(start, end - 15);
+      }
+    }
+  } catch {}
+}
+
+function loadLiveTv(channel) {
+  cleanupLiveTv();
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
+  liveTvActive = true;
 
-  try {
-    const caps = await fetch('/api/livetv/webrtc/capabilities').then(r => r.json());
-    liveTvDevice = new mediasoupClient.Device();
-    await liveTvDevice.load({ routerRtpCapabilities: caps });
+  liveTvMediaSource = new MediaSource();
+  video.src = URL.createObjectURL(liveTvMediaSource);
 
-    const transportParams = await fetch('/api/livetv/webrtc/transport', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).then(r => r.json());
+  liveTvMediaSource.addEventListener('sourceopen', () => {
+    try {
+      liveTvSourceBuf = liveTvMediaSource.addSourceBuffer('video/mp4; codecs="avc1.42e01f, mp4a.40.2"');
+      liveTvSourceBuf.mode = 'segments';
+      liveTvSourceBuf.addEventListener('updateend', () => {
+        liveTvTrimBuffer();
+        liveTvDrainQueue();
+      });
+    } catch (err) {
+      console.error('[LiveTV] addSourceBuffer error:', err);
+      return;
+    }
+    // Tell server we're ready
+    socket.emit('livetv-join');
+  });
 
-    liveTvTransport = liveTvDevice.createRecvTransport(transportParams);
-    liveTvTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
-      fetch('/api/livetv/webrtc/transport/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dtlsParameters }),
-      }).then(callback).catch(errback);
-    });
+  socket.on('livetv-init', (data) => {
+    if (!liveTvActive) return;
+    const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer || data);
+    liveTvQueue.push(buf);
+    liveTvDrainQueue();
+  });
 
-    const consumers = await fetch('/api/livetv/webrtc/consume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rtpCapabilities: liveTvDevice.rtpCapabilities }),
-    }).then(r => r.json());
+  socket.on('livetv-fragment', (data) => {
+    if (!liveTvActive) return;
+    const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer || data);
+    liveTvQueue.push(buf);
+    liveTvDrainQueue();
+    // Auto-play once we have some data
+    if (video.paused && liveTvSourceBuf && liveTvSourceBuf.buffered.length > 0) {
+      video.play().catch(() => showPlayOverlay());
+    }
+  });
 
-    const mediaConsumers = await Promise.all(consumers.map(c => liveTvTransport.consume(c)));
-    // Increase playout delay — WebRTC's default jitter buffer is tuned for
-    // real-time calls (~50ms), too small for transcoded live TV.
-    mediaConsumers.forEach(c => {
-      const receiver = c.rtpReceiver;
-      if (receiver && 'playoutDelayHint' in receiver) {
-        receiver.playoutDelayHint = 10.0; // 10s buffer — all viewers apply the same delay so relative sync is unaffected
-      }
-    });
-    video.srcObject = new MediaStream(mediaConsumers.map(c => c.track));
-    video.play().catch(() => showPlayOverlay());
-  } catch (err) {
-    console.error('[LiveTV] WebRTC connect error:', err);
-    currentKey = null; // allow retry on next state event
-    setTimeout(() => { if (currentKey === null) loadLiveTv(channel); }, 5000);
-  }
+  socket.on('livetv-reset', () => {
+    if (!liveTvActive) return;
+    console.log('[LiveTV] Channel changed — resetting MSE');
+    cleanupLiveTv();
+    setTimeout(() => loadLiveTv(channel), 500);
+  });
 }
 
 function applyLiveTvState(state) {

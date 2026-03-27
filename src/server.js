@@ -140,9 +140,6 @@ app.get('/api/config', (req, res) => res.json({ enabledRoomTypes }));
 
 if (enabledRoomTypes.livetv) {
   app.use('/api/livetv', requireAuth, require('./routes/livetv'));
-  require('./livetv-manager').initMediasoup().catch(err =>
-    console.error('[LiveTV] mediasoup init failed:', err)
-  );
 }
 
 app.get('/api/me', (req, res) => {

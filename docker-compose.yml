@@ -7,7 +7,6 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "30000-30100:30000-30100/udp"
     env_file:
       - .env
     volumes:

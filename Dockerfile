@@ -14,8 +14,7 @@ RUN npm install
 
 COPY src/ ./src/
 
-# Bundle mediasoup-client into a browser-ready IIFE, then drop devDeps
-RUN npm run build && npm prune --omit=dev
+RUN npm prune --omit=dev
 
 RUN mkdir -p /data
 
