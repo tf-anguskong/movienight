@@ -182,16 +182,22 @@ async function startFfmpeg(channel) {
 
   const args = [
     '-hide_banner', '-loglevel', 'warning',
-    '-fflags', '+genpts+discardcorrupt',
-    '-analyzeduration', '10M', '-probesize', '10M',
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    '-analyzeduration', '2M', '-probesize', '2M',
     '-i', url,
     // Video output → RTP
     '-map', '0:v:0',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-tune', 'zerolatency',
+    '-g', '30', '-flush_packets', '1',
+    '-max_delay', '0',
     '-f', 'rtp', '-payload_type', '97', '-ssrc', '1111', `rtp://127.0.0.1:${videoPort}`,
     // Audio output → RTP
     '-map', '0:a:0',
-    '-c:a', 'libopus', '-b:a', '128k', '-ac', '2', '-af', 'aresample=async=1000',
+    '-c:a', 'libopus', '-b:a', '128k', '-ac', '2',
+    '-af', 'aresample=async=1000',
+    '-flush_packets', '1',
+    '-max_delay', '0',
     '-f', 'rtp', '-payload_type', '100', '-ssrc', '2222', `rtp://127.0.0.1:${audioPort}`,
   ];
 
