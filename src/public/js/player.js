@@ -366,7 +366,7 @@ function loadLiveTv(channel) {
 
     function makeHlsInstance() {
       const hls = new Hls({
-        enableWorker:               true,
+        enableWorker:               false,
         lowLatencyMode:             true,
         liveSyncDuration:           2,
         liveMaxLatencyDuration:     8,

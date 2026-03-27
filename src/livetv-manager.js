@@ -45,21 +45,20 @@ function stopFfmpeg() {
   }
 }
 
-function startFfmpeg(channel) {
-  stopFfmpeg();
-  clearHls();
-  currentChan = channel;
+// Channels confirmed to need software transcode (MPEG-2 or other non-H.264 codec)
+const transcodeChannels = new Set();
 
-  const url = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
-  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url}`);
-
-  const args = [
+function buildArgs(url, transcode) {
+  const videoArgs = transcode
+    ? ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23']
+    : ['-c:v', 'copy'];
+  return [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+discardcorrupt',
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
-    '-c:v', 'copy',
+    ...videoArgs,
     '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'aresample=async=1000',
     '-f', 'hls',
     '-hls_time', '4',
@@ -68,13 +67,33 @@ function startFfmpeg(channel) {
     '-hls_segment_filename', path.join(HLS_DIR, 'seg%05d.ts'),
     path.join(HLS_DIR, 'index.m3u8'),
   ];
+}
 
-  ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
+function startFfmpeg(channel) {
+  stopFfmpeg();
+  clearHls();
+  currentChan = channel;
+
+  const url       = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
+  const transcode = transcodeChannels.has(channel);
+  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} (${transcode ? 'transcode' : 'copy'}) — ${url}`);
+
+  let stderr = '';
+  const args = buildArgs(url, transcode);
+  ffmpegProc = spawn('ffmpeg', args, { stdio: ['inherit', 'inherit', 'pipe'] });
+
+  ffmpegProc.stderr.on('data', d => { stderr += d.toString(); });
+
   ffmpegProc.on('exit', (code) => {
     console.log(`[LiveTV] ffmpeg exited (code=${code})`);
     if (ffmpegProc) {
       ffmpegProc = null;
-      setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 3000);
+      if (!transcode && /h264_mp4toannexb|not supported by the bitstream|mpeg2video/i.test(stderr)) {
+        // Copy failed due to non-H.264 codec — switch to transcode for this channel
+        console.log(`[LiveTV] Channel ${channel} needs transcode — retrying`);
+        transcodeChannels.add(channel);
+      }
+      setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 1000);
     }
   });
 }
