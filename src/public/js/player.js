@@ -562,7 +562,7 @@ function showNotif(text) {
 // ── Position reporting (for drift indicator) ───────────────
 setInterval(() => {
   let pos = null;
-  if ((roomType === 'movie' || roomType === 'tv' || roomType === 'livetv') && currentKey && !video.paused && !video.ended) {
+  if ((roomType === 'movie' || roomType === 'tv') && currentKey && !video.paused && !video.ended) {
     pos = video.currentTime;
   } else if (roomType === 'youtube' && ytPlayer && ytVideoId) {
     if (ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING) {
@@ -745,7 +745,7 @@ let lastViewers = [];
 
 function renderViewers(viewers) {
   viewersList.innerHTML = viewers.map(v => {
-    const driftHtml = v.drift != null
+    const driftHtml = (v.drift != null && roomType !== 'livetv')
       ? (() => {
           const abs = Math.abs(v.drift);
           const cls = abs < 1 ? 'drift-ok' : abs < 3 ? 'drift-warn' : 'drift-bad';
