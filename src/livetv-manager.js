@@ -167,11 +167,11 @@ async function startFfmpeg(channel) {
     // Video output → RTP
     '-map', '0:v:0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
-    '-f', 'rtp', '-payload_type', '97', `rtp://127.0.0.1:${videoPort}`,
+    '-f', 'rtp', '-payload_type', '97', '-ssrc', '1111', `rtp://127.0.0.1:${videoPort}`,
     // Audio output → RTP
     '-map', '0:a:0',
     '-c:a', 'libopus', '-b:a', '128k', '-ac', '2', '-af', 'aresample=async=1000',
-    '-f', 'rtp', '-payload_type', '100', `rtp://127.0.0.1:${audioPort}`,
+    '-f', 'rtp', '-payload_type', '100', '-ssrc', '2222', `rtp://127.0.0.1:${audioPort}`,
   ];
 
   ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
