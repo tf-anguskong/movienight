@@ -357,26 +357,65 @@ function loadLiveTv(channel) {
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
+
   const src = '/api/livetv/hls/index.m3u8';
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-    hlsInstance = new Hls({
-      enableWorker: true,
-      lowLatencyMode: true,
-      liveSyncDuration: 1,        // stay close to the server-delayed live edge
-      liveMaxLatencyDuration: 5,  // resync if >5s behind delayed edge
-      liveBackBufferLength: 30,   // retain 30s back-buffer so pause/resume doesn't lose data
-    });
-    hlsInstance.loadSource(src);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      video.play().catch(() => showPlayOverlay());
-    });
-    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal) return;
-      currentKey = null; // allow retry on next state event
-      console.error('[LiveTV] Fatal HLS error:', d.details);
-      setTimeout(() => { if (currentKey === null) loadLiveTv(channel); }, 5000);
-    });
+    const STARTUP_RETRY_BUDGET_MS = 30_000;
+    const startedAt = Date.now();
+    let startupDone = false;
+
+    function makeHlsInstance() {
+      const hls = new Hls({
+        enableWorker:               true,
+        lowLatencyMode:             true,
+        liveSyncDuration:           2,
+        liveMaxLatencyDuration:     8,
+        liveBackBufferLength:       30,
+        manifestLoadingMaxRetry:    0,  // we handle retries ourselves
+        manifestLoadingRetryDelay:  0,
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        startupDone = true;
+        video.play().catch(() => showPlayOverlay());
+      });
+
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        const isManifest503 =
+          !startupDone &&
+          d.type === Hls.ErrorTypes.NETWORK_ERROR &&
+          d.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR &&
+          d.response?.code === 503;
+
+        if (isManifest503) {
+          if (Date.now() - startedAt < STARTUP_RETRY_BUDGET_MS) {
+            hls.destroy();
+            setTimeout(() => {
+              if (currentKey === channel) { hlsInstance = makeHlsInstance(); }
+            }, 2000);
+            return;
+          }
+        }
+
+        if (!d.fatal) return;
+        if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          console.warn('[LiveTV] Media error, recovering:', d.details);
+          hls.recoverMediaError();
+        } else {
+          currentKey = null;
+          console.error('[LiveTV] Fatal HLS error:', d.details);
+          setTimeout(() => {
+            if (currentKey === null) { hlsInstance = makeHlsInstance(); currentKey = channel; }
+          }, 5000);
+        }
+      });
+
+      return hls;
+    }
+
+    hlsInstance = makeHlsInstance();
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = src;
     video.play().catch(() => showPlayOverlay());

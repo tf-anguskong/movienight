@@ -45,37 +45,103 @@ function stopFfmpeg() {
   }
 }
 
-function startFfmpeg(channel) {
-  stopFfmpeg();
-  clearHls();
-  currentChan = channel;
+async function probeSource(url) {
+  const runProbe = (url, selectStreams, readSeconds) => new Promise((resolve) => {
+    const args = [
+      '-v', 'quiet', '-print_format', 'json', '-show_streams',
+      '-select_streams', selectStreams,
+      '-read_intervals', `%+${readSeconds}`,
+      '-analyzeduration', `${readSeconds * 1_000_000}`,
+      '-probesize', `${readSeconds * 1_000_000}`,
+      url,
+    ];
+    let stdout = '';
+    let settled = false;
+    const proc = spawn('ffprobe', args);
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      proc.kill('SIGKILL'); resolve(null);
+    }, (readSeconds + 1) * 1000);
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.on('close', () => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      try { resolve(JSON.parse(stdout).streams?.[0] || null); } catch { resolve(null); }
+    });
+    proc.on('error', () => { if (!settled) { settled = true; clearTimeout(timer); resolve(null); } });
+  });
 
-  const url = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
-  console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url}`);
+  const vs = await runProbe(url, 'v:0', 5);
+  const as = await runProbe(url, 'a:0', 3);
+  if (!vs) return null;
 
-  const args = [
+  const [fn, fd] = (vs.avg_frame_rate || vs.r_frame_rate || '0/1').split('/');
+  const fps = fd && fd !== '0' ? parseFloat(fn) / parseFloat(fd) : 0;
+  const isInterlaced = vs.field_order ? !['progressive', 'unknown', ''].includes(vs.field_order) : false;
+
+  return {
+    videoCodec:  vs.codec_name || '',
+    fps,
+    isInterlaced,
+    audioCodec:  as?.codec_name || '',
+  };
+}
+
+function buildFfmpegArgs(url, probe) {
+  const SEG_DURATION = 2;
+
+  // ── Video ────────────────────────────────────────────────────────────────────
+  let videoArgs;
+  if (probe?.videoCodec === 'h264') {
+    // Direct passthrough: zero CPU, no quality loss, perfect A/V sync
+    videoArgs = ['-c:v', 'copy', '-bsf:v', 'h264_mp4toannexb'];
+  } else {
+    const fps     = probe?.fps > 0 ? probe.fps : 29.97;
+    const gopSize = Math.ceil(fps * SEG_DURATION); // keyframe every segment boundary
+    videoArgs = [
+      ...(probe?.isInterlaced ? ['-vf', 'yadif=mode=0'] : []),
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
+      '-g', String(gopSize), '-sc_threshold', '0', '-keyint_min', String(gopSize),
+    ];
+  }
+
+  // ── Audio ────────────────────────────────────────────────────────────────────
+  const audioArgs = probe?.audioCodec === 'aac'
+    ? ['-c:a', 'copy']
+    : ['-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'aresample=async=1000'];
+
+  return [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+discardcorrupt',
     '-analyzeduration', '10M', '-probesize', '10M',
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-tune', 'zerolatency',
-    '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-    '-af', 'aresample=async=1000',
+    ...videoArgs,
+    ...audioArgs,
     '-f', 'hls',
-    '-hls_time', '2',
+    '-hls_time', String(SEG_DURATION),
     '-hls_list_size', '300',
     '-hls_flags', 'append_list+omit_endlist',
     '-hls_segment_filename', path.join(HLS_DIR, 'seg%05d.ts'),
     path.join(HLS_DIR, 'index.m3u8'),
   ];
+}
 
+async function startFfmpeg(channel) {
+  stopFfmpeg();
+  clearHls();
+  currentChan = channel;
+
+  const url = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
+  console.log(`[LiveTV] Probing channel ${channel}…`);
+  const probe = await probeSource(url);
+  console.log(`[LiveTV] Strategy: video=${probe?.videoCodec ?? 'unknown'} fps=${probe?.fps?.toFixed(2) ?? '?'} interlaced=${probe?.isInterlaced ?? '?'} audio=${probe?.audioCodec ?? 'unknown'}`);
+
+  const args = buildFfmpegArgs(url, probe);
   ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
   ffmpegProc.on('exit', (code) => {
     console.log(`[LiveTV] ffmpeg exited (code=${code})`);
-    if (ffmpegProc) { // not a deliberate stop
+    if (ffmpegProc) {
       ffmpegProc = null;
-      // Auto-restart after brief delay if we still have a current channel
       setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 3000);
     }
   });
