@@ -180,25 +180,21 @@ async function startFfmpeg(channel) {
   const url = `http://${HDHR_IP}:${HDHR_PORT}/auto/v${channel}`;
   console.log(`[LiveTV] Starting ffmpeg for channel ${channel} — ${url} (video:${videoPort} audio:${audioPort})`);
 
+  const teeOutput = [
+    `[select=v:f=rtp:ssrc=1111:payload_type=97]rtp://127.0.0.1:${videoPort}`,
+    `[select=a:f=rtp:ssrc=2222:payload_type=100]rtp://127.0.0.1:${audioPort}`,
+  ].join('|');
+
   const args = [
     '-hide_banner', '-loglevel', 'warning',
-    '-fflags', 'nobuffer',
-    '-flags', 'low_delay',
+    '-fflags', '+genpts+discardcorrupt',
     '-analyzeduration', '2M', '-probesize', '2M',
     '-i', url,
-    // Video output → RTP
-    '-map', '0:v:0',
+    '-map', '0:v:0', '-map', '0:a:0',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-tune', 'zerolatency',
-    '-g', '30', '-flush_packets', '1',
-    '-max_delay', '0',
-    '-f', 'rtp', '-payload_type', '97', '-ssrc', '1111', `rtp://127.0.0.1:${videoPort}`,
-    // Audio output → RTP
-    '-map', '0:a:0',
     '-c:a', 'libopus', '-b:a', '128k', '-ac', '2',
     '-af', 'aresample=async=1000',
-    '-flush_packets', '1',
-    '-max_delay', '0',
-    '-f', 'rtp', '-payload_type', '100', '-ssrc', '2222', `rtp://127.0.0.1:${audioPort}`,
+    '-f', 'tee', teeOutput,
   ];
 
   ffmpegProc = spawn('ffmpeg', args, { stdio: 'inherit' });
