@@ -208,7 +208,7 @@ async function startFfmpeg(channel) {
     '-i', url,
     '-map', '0:v:0', '-map', '0:a:0',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-    '-b:v', '3M', '-maxrate', '3M', '-bufsize', '1.5M',
+    '-b:v', '6M', '-maxrate', '6M', '-bufsize', '3M',
     '-bsf:v', 'dump_extra',
     '-g', '30',
     '-c:a', 'libopus', '-b:a', '128k', '-ac', '2',
