@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   movienight:
     build: .
@@ -15,9 +13,6 @@ services:
       - "host.docker.internal:host-gateway"
     devices:
       - /dev/dri:/dev/dri
-    group_add:
-      - "video"
-      - "render"
 
 volumes:
   sessions:
