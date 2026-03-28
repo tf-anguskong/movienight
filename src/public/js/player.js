@@ -467,10 +467,6 @@ function applyLiveTvState(state) {
     loadLiveTv(state.liveTvChannel);
   }
 
-  // Compute target from server state — same smooth extrapolation as movie sync
-  const elapsed    = (Date.now() - state.lastUpdate) / 1000;
-  const targetTime = state.playing ? state.position + elapsed : state.position;
-
   // Sync play/pause state
   if (state.playing && video.paused) {
     isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
@@ -482,19 +478,20 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Drift correction — guests only, same logic as movie/TV sync.
-  // Host's reported position calibrates room.position on the server,
-  // so targetTime is a smooth, deterministic value all clients share.
-  if (!isHost && state.playing && !video.paused) {
-    const drift    = video.currentTime - targetTime;
+  // Drift correction — all viewers sync to the server-computed live edge.
+  // The server reads the manifest, computes the target currentTime from segment
+  // durations, and broadcasts it. This is deterministic — every client gets the
+  // same number, eliminating per-client liveSyncPosition variance.
+  if (state.playing && !video.paused && state.liveTvTargetTime != null) {
+    const drift    = video.currentTime - state.liveTvTargetTime;
     const absDrift = Math.abs(drift);
 
-    if (absDrift > 5) {
+    if (absDrift > 3) {
       isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-      video.currentTime = targetTime;
+      video.currentTime = state.liveTvTargetTime;
       releaseSyncLock();
     } else if (absDrift > 0.5) {
-      video.playbackRate = drift > 0 ? 0.95 : 1.05;
+      video.playbackRate = drift > 0 ? 0.97 : 1.03;
     } else {
       if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
     }

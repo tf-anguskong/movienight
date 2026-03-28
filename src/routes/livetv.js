@@ -79,4 +79,43 @@ router.get('/hls/:file', (req, res) => {
   });
 });
 
+/**
+ * Compute the target video.currentTime for the delayed live edge.
+ * All clients should sync to this value so they converge on the same position.
+ * Returns null if the stream isn't ready.
+ */
+function getLiveEdgeTime() {
+  const manifestPath = path.join(livetv.getHlsDir(), 'index.m3u8');
+  let raw;
+  try { raw = fs.readFileSync(manifestPath, 'utf8'); } catch { return null; }
+
+  const seqMatch = raw.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+  if (!seqMatch) return null;
+  const baseSeq = parseInt(seqMatch[1], 10);
+
+  const lines = raw.split('\n');
+  const durations = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('#EXTINF:')) {
+      durations.push(parseFloat(lines[i].split(':')[1]));
+    }
+  }
+
+  if (durations.length < DELAY_SEGMENTS + 3) return null;
+
+  const end = durations.length - DELAY_SEGMENTS;
+
+  // Estimate PTS offset for segments pruned from the manifest
+  const avgDur = durations.reduce((a, b) => a + b, 0) / durations.length;
+  const prunedTime = baseSeq * avgDur;
+
+  // Sum durations of visible segments up to the delayed live edge
+  let windowTime = 0;
+  for (let i = 0; i < end; i++) windowTime += durations[i];
+
+  // Subtract liveSyncDuration (2s) to match HLS.js target position
+  return prunedTime + windowTime - 2;
+}
+
 module.exports = router;
+module.exports.getLiveEdgeTime = getLiveEdgeTime;

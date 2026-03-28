@@ -85,6 +85,7 @@ class Room {
       hasNextEpisode: this.roomType === 'tv' && this.tvEpisodeIndex < this.tvEpisodeList.length - 1,
       liveTvChannel:      this.liveTvChannel,
       liveTvChannelTitle: this.liveTvChannelTitle,
+      liveTvTargetTime:   this._liveTvTargetTime ?? null,
       playing: this.playing,
       position: this.currentPosition(),
       lastUpdate: Date.now(),
@@ -200,15 +201,14 @@ function setupSync(io, enabledRoomTypes) {
     rooms.forEach(room => {
       if (room.roomType !== 'livetv') return;
       if (room.viewers.size > 0 && liveTvManager) liveTvManager.heartbeat();
-      // Calibrate room position from host's reported playback time.
-      // This makes currentPosition() return a smooth, deterministic value
-      // that advances at real-time speed — same as movie/TV sync.
-      const hostViewer = room.viewers.get(room.hostSocketId);
-      if (hostViewer?.reportedTime != null && hostViewer.reportedAt != null) {
-        room.position   = hostViewer.reportedTime;
-        room.lastUpdate = hostViewer.reportedAt;
+      // Compute the manifest-based target time for inter-viewer sync.
+      // All clients converge on this value instead of per-client liveSyncPosition.
+      const livetvRoute = require('./routes/livetv');
+      const targetTime = livetvRoute.getLiveEdgeTime?.();
+      if (targetTime != null) {
+        room._liveTvTargetTime = targetTime;
       }
-      if (room.playing && room.viewers.size > 1) {
+      if (room.playing && room.viewers.size > 0) {
         room.broadcastState(io);
         room.broadcastViewers(io);
       }
