@@ -18,6 +18,7 @@ const NOW_PLAYING_TTL_MS = 120_000; // 2 min — refresh program info frequently
 let ffmpegProc    = null;
 let currentChan   = null;
 let idleTimer     = null;
+let intentionalKill = false; // suppress restart when we killed ffmpeg on purpose
 
 let channelsCache     = null;
 let channelsFetchedAt = 0;
@@ -39,7 +40,11 @@ function clearHls() {
 }
 
 function stopFfmpeg() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  currentChan = null;
   if (ffmpegProc) {
+    intentionalKill = true;
     ffmpegProc.kill('SIGKILL');
     ffmpegProc = null;
   }
@@ -152,19 +157,24 @@ async function startFfmpeg(channel, forceSwEncode) {
 
   ffmpegProc.on('exit', (code) => {
     console.log(`[LiveTV] ffmpeg exited (code=${code})`);
-    if (ffmpegProc) {
-      ffmpegProc = null;
-
-      // If VAAPI failed, fall back to software encoding
-      if (useVaapi && code !== 0) {
-        console.log(`[LiveTV] VAAPI encode failed, falling back to software`);
-        vaapi = false;
-        setTimeout(() => { if (currentChan) startFfmpeg(currentChan, true); }, 1000);
-        return;
-      }
-
-      setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 3000);
+    // stopFfmpeg() already nulled ffmpegProc and set intentionalKill — don't restart
+    if (!ffmpegProc) {
+      if (intentionalKill) { intentionalKill = false; return; }
+      // Unexpected exit after stopFfmpeg race — ignore
+      return;
     }
+    ffmpegProc = null;
+
+    // If VAAPI failed, fall back to software encoding
+    if (useVaapi && code !== 0) {
+      console.log(`[LiveTV] VAAPI encode failed, falling back to software`);
+      vaapi = false;
+      setTimeout(() => { if (currentChan) startFfmpeg(currentChan, true); }, 1000);
+      return;
+    }
+
+    // Unexpected crash — restart if we still want this channel
+    setTimeout(() => { if (currentChan) startFfmpeg(currentChan); }, 3000);
   });
 }
 

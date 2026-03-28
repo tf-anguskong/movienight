@@ -140,6 +140,16 @@ function broadcastRoomList(io) {
   io.emit('room-list', Array.from(rooms.values()).map(r => r.summary()));
 }
 
+// Stop ffmpeg when no live TV rooms remain
+function checkLiveTvCleanup() {
+  if (!liveTvManager) return;
+  const hasLiveTvRoom = Array.from(rooms.values()).some(r => r.roomType === 'livetv');
+  if (!hasLiveTvRoom) {
+    console.log('[LiveTV] No live TV rooms remaining — stopping stream');
+    liveTvManager.stopFfmpeg();
+  }
+}
+
 // Per-socket rate limiter — sliding window
 function makeSocketRateLimiter(maxCalls, windowMs) {
   const history = new Map(); // socketId -> timestamp[]
@@ -676,6 +686,7 @@ function setupSync(io, enabledRoomTypes) {
           inviteTokens.delete(room.inviteToken);
           rooms.delete(room.id);
           broadcastRoomList(io);
+          checkLiveTvCleanup();
         } else {
           // Give the Plex host a grace window to reconnect (e.g. lobby → watch navigation).
           // If they rejoin before the timer fires it will be cancelled.
@@ -687,6 +698,7 @@ function setupSync(io, enabledRoomTypes) {
             inviteTokens.delete(room.inviteToken);
             rooms.delete(room.id);
             broadcastRoomList(io);
+            checkLiveTvCleanup();
           }, 30000);
         }
       } else {
