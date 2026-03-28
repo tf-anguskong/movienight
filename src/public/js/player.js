@@ -458,10 +458,9 @@ function applyLiveTvState(state) {
     loadLiveTv(state.liveTvChannel);
   }
 
-  // Sync play/pause state
+  // Sync play/pause state (no seeking — just play/pause)
   if (state.playing && video.paused) {
     isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-    if (hlsInstance?.liveSyncPosition) video.currentTime = hlsInstance.liveSyncPosition;
     video.play().catch(() => showPlayOverlay());
     releaseSyncLock();
   } else if (!state.playing && !video.paused) {
@@ -470,20 +469,19 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Drift correction — guests only, host is the time authority
+  // Rate-only drift correction — guests only, host is the time authority.
+  // Never seek (seeking causes stutter). Only adjust playbackRate so guests
+  // gradually converge. Guests should never be ahead of the host.
   if (!isHost && state.playing && !video.paused && state.liveTvHostTime != null && state.liveTvHostAt != null) {
-    // Extrapolate where the host is RIGHT NOW from their last report
     const hostNow = state.liveTvHostTime + (Date.now() - state.liveTvHostAt) / 1000;
-    const drift = video.currentTime - hostNow;
-    if (Math.abs(drift) > 2.0) {
-      isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-      video.currentTime = hostNow;
-      releaseSyncLock();
-    } else if (Math.abs(drift) > 0.5) {
-      video.playbackRate = drift > 0 ? 0.97 : 1.03;
-    } else {
-      if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
-    }
+    const behind = hostNow - video.currentTime; // positive = guest is behind host
+
+    if (behind > 8)       video.playbackRate = 1.20;  // very behind — aggressive catchup
+    else if (behind > 4)  video.playbackRate = 1.10;
+    else if (behind > 1)  video.playbackRate = 1.05;
+    else if (behind > 0.3) video.playbackRate = 1.02;
+    else if (behind < -0.5) video.playbackRate = 0.90; // ahead of host — slow down
+    else                   video.playbackRate = 1.0;   // in sync
   }
 
   if (guideOpen) renderGuide(); // re-highlight active channel
