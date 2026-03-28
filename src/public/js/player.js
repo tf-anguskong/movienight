@@ -791,8 +791,14 @@ function setYoutubeUrl() {
 let lastViewers = [];
 
 function renderViewers(viewers) {
+  // For live TV, log drift to console instead of showing in UI
+  if (roomType === 'livetv') {
+    const drifts = viewers.filter(v => v.drift != null).map(v => `${v.name}: ${v.drift > 0 ? '+' : ''}${v.drift.toFixed(1)}s`);
+    if (drifts.length) console.log('[LiveTV sync]', drifts.join(', '));
+  }
+
   viewersList.innerHTML = viewers.map(v => {
-    const driftHtml = v.drift != null
+    const driftHtml = (roomType !== 'livetv' && v.drift != null)
       ? (() => {
           const abs = Math.abs(v.drift);
           const cls = abs < 1 ? 'drift-ok' : abs < 3 ? 'drift-warn' : 'drift-bad';
