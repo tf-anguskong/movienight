@@ -382,25 +382,6 @@ function loadLiveTv(channel) {
         video.play().catch(() => showPlayOverlay());
       });
 
-      // Self-correct on every manifest refresh — fires each time HLS.js
-      // polls the manifest (~every target duration), giving much faster
-      // correction than waiting for the server's 2s heartbeat.
-      hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
-        if (!data.details?.live || video.paused || isSyncing) return;
-        const edge = hls.liveSyncPosition;
-        if (edge == null) return;
-        const drift = video.currentTime - edge;
-        if (Math.abs(drift) > 2.0) {
-          isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-          video.currentTime = edge;
-          releaseSyncLock();
-        } else if (Math.abs(drift) > 0.5) {
-          video.playbackRate = drift > 0 ? 0.97 : 1.03;
-        } else {
-          if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
-        }
-      });
-
       hls.on(Hls.Events.ERROR, (_, d) => {
         const isManifest503 =
           !startupDone &&
@@ -477,11 +458,10 @@ function applyLiveTvState(state) {
     loadLiveTv(state.liveTvChannel);
   }
 
-  // Sync play/pause state — on resume, snap to server-computed live edge
+  // Sync play/pause state
   if (state.playing && video.paused) {
     isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-    if (state.liveTvTargetTime != null) video.currentTime = state.liveTvTargetTime;
-    else if (hlsInstance?.liveSyncPosition) video.currentTime = hlsInstance.liveSyncPosition;
+    if (hlsInstance?.liveSyncPosition) video.currentTime = hlsInstance.liveSyncPosition;
     video.play().catch(() => showPlayOverlay());
     releaseSyncLock();
   } else if (!state.playing && !video.paused) {
@@ -490,16 +470,16 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Drift correction — all viewers sync to server-computed target
-  if (state.playing && !video.paused && state.liveTvTargetTime != null) {
-    const drift = video.currentTime - state.liveTvTargetTime;
+  // Drift correction — guests only, host is the time authority
+  if (!isHost && state.playing && !video.paused && state.liveTvHostTime != null && state.liveTvHostAt != null) {
+    // Extrapolate where the host is RIGHT NOW from their last report
+    const hostNow = state.liveTvHostTime + (Date.now() - state.liveTvHostAt) / 1000;
+    const drift = video.currentTime - hostNow;
     if (Math.abs(drift) > 2.0) {
-      // Too far off — hard snap
       isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
-      video.currentTime = state.liveTvTargetTime;
+      video.currentTime = hostNow;
       releaseSyncLock();
     } else if (Math.abs(drift) > 0.5) {
-      // Gentle correction
       video.playbackRate = drift > 0 ? 0.97 : 1.03;
     } else {
       if (video.playbackRate !== 1.0) video.playbackRate = 1.0;

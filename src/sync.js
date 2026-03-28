@@ -90,7 +90,8 @@ class Room {
       lastUpdate: Date.now(),
       settings: this.settings,
       intermissionEndsAt: this.intermissionEndsAt || null,
-      liveTvTargetTime: this._liveTvTargetTime ?? null
+      liveTvHostTime: this._liveTvHostTime ?? null,
+      liveTvHostAt:   this._liveTvHostAt ?? null
     };
   }
 
@@ -191,10 +192,12 @@ function setupSync(io, enabledRoomTypes) {
     rooms.forEach(room => {
       if (room.roomType !== 'livetv') return;
       if (room.viewers.size > 0 && liveTvManager) liveTvManager.heartbeat();
-      // Server-authoritative live edge target for inter-viewer sync
-      const livetvRoute = require('./routes/livetv');
-      const targetTime = livetvRoute.getLiveEdgeTime?.();
-      if (targetTime != null) room._liveTvTargetTime = targetTime;
+      // Pass through the host's raw reported position for guest sync
+      const hostViewer = room.viewers.get(room.hostSocketId);
+      if (hostViewer?.reportedTime != null && hostViewer.reportedAt != null) {
+        room._liveTvHostTime = hostViewer.reportedTime;
+        room._liveTvHostAt   = hostViewer.reportedAt;
+      }
       if (room.playing && room.viewers.size > 1) {
         room.broadcastState(io);
         room.broadcastViewers(io);
