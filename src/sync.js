@@ -89,9 +89,7 @@ class Room {
       position: this.currentPosition(),
       lastUpdate: Date.now(),
       settings: this.settings,
-      intermissionEndsAt: this.intermissionEndsAt || null,
-      liveTvHostTime: this._liveTvHostTime ?? null,
-      liveTvHostAt:   this._liveTvHostAt ?? null
+      intermissionEndsAt: this.intermissionEndsAt || null
     };
   }
 
@@ -202,11 +200,13 @@ function setupSync(io, enabledRoomTypes) {
     rooms.forEach(room => {
       if (room.roomType !== 'livetv') return;
       if (room.viewers.size > 0 && liveTvManager) liveTvManager.heartbeat();
-      // Pass through the host's raw reported position for guest sync
+      // Calibrate room position from host's reported playback time.
+      // This makes currentPosition() return a smooth, deterministic value
+      // that advances at real-time speed — same as movie/TV sync.
       const hostViewer = room.viewers.get(room.hostSocketId);
       if (hostViewer?.reportedTime != null && hostViewer.reportedAt != null) {
-        room._liveTvHostTime = hostViewer.reportedTime;
-        room._liveTvHostAt   = hostViewer.reportedAt;
+        room.position   = hostViewer.reportedTime;
+        room.lastUpdate = hostViewer.reportedAt;
       }
       if (room.playing && room.viewers.size > 1) {
         room.broadcastState(io);

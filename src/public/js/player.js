@@ -467,7 +467,11 @@ function applyLiveTvState(state) {
     loadLiveTv(state.liveTvChannel);
   }
 
-  // Sync play/pause state (no seeking — just play/pause)
+  // Compute target from server state — same smooth extrapolation as movie sync
+  const elapsed    = (Date.now() - state.lastUpdate) / 1000;
+  const targetTime = state.playing ? state.position + elapsed : state.position;
+
+  // Sync play/pause state
   if (state.playing && video.paused) {
     isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
     tryPlay();
@@ -478,20 +482,22 @@ function applyLiveTvState(state) {
     releaseSyncLock();
   }
 
-  // Rate-only drift correction — guests only, host is the time authority.
-  // Never seek (seeking causes stutter). Only adjust playbackRate so guests
-  // gradually converge. Guests should never be ahead of the host.
-  if (!isHost && state.playing && !video.paused && state.liveTvHostTime != null && state.liveTvHostAt != null) {
-    const hostNow = state.liveTvHostTime + (Date.now() - state.liveTvHostAt) / 1000;
-    const behind = hostNow - video.currentTime; // positive = guest is behind host
+  // Drift correction — guests only, same logic as movie/TV sync.
+  // Host's reported position calibrates room.position on the server,
+  // so targetTime is a smooth, deterministic value all clients share.
+  if (!isHost && state.playing && !video.paused) {
+    const drift    = video.currentTime - targetTime;
+    const absDrift = Math.abs(drift);
 
-    if (behind > 8)        video.playbackRate = 1.30;
-    else if (behind > 4)   video.playbackRate = 1.20;
-    else if (behind > 2)   video.playbackRate = 1.12;
-    else if (behind > 1)   video.playbackRate = 1.08;
-    else if (behind > 0.5) video.playbackRate = 1.04;
-    else if (behind < -0.5) video.playbackRate = 0.90; // ahead of host — slow down
-    else                    video.playbackRate = 1.0;   // in sync
+    if (absDrift > 5) {
+      isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
+      video.currentTime = targetTime;
+      releaseSyncLock();
+    } else if (absDrift > 0.5) {
+      video.playbackRate = drift > 0 ? 0.95 : 1.05;
+    } else {
+      if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+    }
   }
 
   if (guideOpen) renderGuide(); // re-highlight active channel
