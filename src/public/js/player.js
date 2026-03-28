@@ -382,6 +382,25 @@ function loadLiveTv(channel) {
         video.play().catch(() => showPlayOverlay());
       });
 
+      // Self-correct on every manifest refresh — fires each time HLS.js
+      // polls the manifest (~every target duration), giving much faster
+      // correction than waiting for the server's 2s heartbeat.
+      hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+        if (!data.details?.live || video.paused || isSyncing) return;
+        const edge = hls.liveSyncPosition;
+        if (edge == null) return;
+        const drift = video.currentTime - edge;
+        if (Math.abs(drift) > 2.0) {
+          isSyncing = true; setSyncing(true); clearTimeout(syncTimer);
+          video.currentTime = edge;
+          releaseSyncLock();
+        } else if (Math.abs(drift) > 0.5) {
+          video.playbackRate = drift > 0 ? 0.97 : 1.03;
+        } else {
+          if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+        }
+      });
+
       hls.on(Hls.Events.ERROR, (_, d) => {
         const isManifest503 =
           !startupDone &&

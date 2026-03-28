@@ -8,8 +8,8 @@ const livetv   = require('../livetv-manager');
 const router = express.Router();
 const VALID_HLS_FILE = /^(index\.m3u8|seg\d+\.ts)$/;
 
-const DELAY_SEGMENTS  = parseInt(process.env.LIVETV_DELAY_SEGMENTS  ?? '3',  10); // 6s delay
-const WINDOW_SEGMENTS = parseInt(process.env.LIVETV_WINDOW_SEGMENTS ?? '15', 10); // 30s window
+const DELAY_SEGMENTS  = parseInt(process.env.LIVETV_DELAY_SEGMENTS  ?? '3',  10); // 6s delay (3 × 2s)
+const WINDOW_SEGMENTS = parseInt(process.env.LIVETV_WINDOW_SEGMENTS ?? '30', 10); // 60s window (30 × 2s)
 
 // GET /api/livetv/guide
 router.get('/guide', async (req, res) => {
