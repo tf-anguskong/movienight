@@ -391,19 +391,26 @@ function setupSync(io, enabledRoomTypes) {
     });
 
     // ── Select live TV channel (host only, livetv rooms) ──
-    socket.on('select-livetv-channel', ({ channel, channelTitle, ratingKey }) => {
+    socket.on('select-livetv-channel', async ({ channel, channelTitle, channelId }) => {
       const room = socketToRoom.get(socket.id);
       if (!room || socket.id !== room.hostSocketId || room.roomType !== 'livetv') return;
-      if (!ratingKey) return;
+      if (!channelId) return;
       clearRoomManifest(room.id); // stop any existing Plex transcode session
-      room.liveTvChannel      = String(channel || '').slice(0, 20);
-      room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
-      room.movieKey   = String(ratingKey);
-      room.playing    = true;
-      room.position   = 0;
-      room.lastUpdate = Date.now();
-      room.broadcastState(io);
-      console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey})`);
+      try {
+        const liveTvManager = require('./livetv-manager');
+        const sessionUuid = await liveTvManager.tuneChannel(channelId);
+        room.liveTvChannel      = String(channel || '').slice(0, 20);
+        room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
+        room.movieKey   = sessionUuid;
+        room.playing    = true;
+        room.position   = 0;
+        room.lastUpdate = Date.now();
+        room.broadcastState(io);
+        console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (session=${sessionUuid})`);
+      } catch (err) {
+        console.error(`[Room] Failed to tune channel ${channel}:`, err.message);
+        socket.emit('error-message', `Failed to tune channel: ${err.message}`);
+      }
     });
 
     // ── Playback (anyone in room, unless locked) ───────────

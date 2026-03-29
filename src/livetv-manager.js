@@ -4,12 +4,14 @@ const axios = require('axios');
 
 const PLEX_HOST        = process.env.LIVETV_PLEX_HOST || process.env.PLEX_URL || '';
 const PLEX_TOKEN       = process.env.LIVETV_PLEX_TOKEN || process.env.PLEX_TOKEN || '';
+const CLIENT_ID        = 'movienight-app';
 const GUIDE_TTL_MS       = 300_000; // 5 min — channel lineup is stable
 const NOW_PLAYING_TTL_MS = 120_000; // 2 min — refresh program info frequently
 
 let channelsCache     = null;
 let channelsFetchedAt = 0;
 let cachedEpgId       = null;
+let cachedDvrKey      = null;
 let nowPlayingCache     = null;
 let nowPlayingFetchedAt = 0;
 
@@ -19,20 +21,19 @@ function buildHeaders() {
   return headers;
 }
 
+async function fetchDvrInfo(headers) {
+  const { data } = await axios.get(`${PLEX_HOST}/livetv/dvrs`, { headers, timeout: 10000 });
+  const dvr = data?.MediaContainer?.Dvr?.[0];
+  if (!dvr) throw new Error('No DVR found');
+  cachedEpgId  = dvr.epgIdentifier;
+  cachedDvrKey = dvr.key;
+}
+
 async function fetchChannels(headers) {
-  if (!cachedEpgId) {
-    const dvrsRes = await axios.get(`${PLEX_HOST}/livetv/dvrs`, { headers, timeout: 10000 });
-    cachedEpgId = dvrsRes.data?.MediaContainer?.Dvr?.[0]?.epgIdentifier;
-    if (!cachedEpgId) throw new Error('No DVR/EPG identifier found');
-  }
+  if (!cachedEpgId || !cachedDvrKey) await fetchDvrInfo(headers);
   const { data } = await axios.get(`${PLEX_HOST}/${cachedEpgId}/lineups/dvr/channels`, { headers, timeout: 10000 });
-  const channels = data?.MediaContainer?.Channel || [];
-  // Log first channel object to discover the correct key/path format for transcoding
-  if (channels.length) console.log('[LiveTV] Sample channel object keys:', JSON.stringify(Object.keys(channels[0])));
-  if (channels.length) console.log('[LiveTV] Sample channel:', JSON.stringify({ key: channels[0].key, ratingKey: channels[0].ratingKey, id: channels[0].id, slug: channels[0].slug, guid: channels[0].guid }));
-  return channels.map(ch => ({
-    ratingKey: String(ch.ratingKey || ch.id || ''),
-    key:       ch.key || '',
+  return (data?.MediaContainer?.Channel || []).map(ch => ({
+    channelId: String(ch.id || ''),
     number:    ch.vcn || '',
     title:     ch.title || ch.callSign || '',
     thumb:     ch.thumb || null,
@@ -51,29 +52,48 @@ async function fetchNowPlaying(headers) {
   for (const v of (data?.MediaContainer?.Video || [])) {
     const key = v.channelCallSign || v.channelID;
     if (!key) continue;
-    // For series episodes show "Show: Episode"; for movies/specials just the title
     programs[key] = v.grandparentTitle ? `${v.grandparentTitle}: ${v.title}` : (v.title || '');
   }
   return programs;
+}
+
+// Tune a live TV channel via Plex DVR — returns the session UUID
+async function tuneChannel(channelId) {
+  const headers = buildHeaders();
+  if (!cachedDvrKey) await fetchDvrInfo(headers);
+
+  const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
+  const { data } = await axios.post(url, null, {
+    headers,
+    params: { 'X-Plex-Client-Identifier': CLIENT_ID },
+    timeout: 15000,
+  });
+
+  // The tune response nests metadata under MediaSubscription[0].MediaGrabOperation[0].Metadata
+  const meta = data?.MediaContainer?.MediaSubscription?.[0]?.MediaGrabOperation?.[0]?.Metadata;
+  if (!meta?.key) throw new Error('Tune response missing session key');
+
+  // key is like "/livetv/sessions/5e3a8fa6-3066-48eb-9630-49e3879c0f50"
+  const uuid = meta.key.replace('/livetv/sessions/', '');
+  console.log(`[LiveTV] Tuned channel ${channelId} → session ${uuid}`);
+  return uuid;
 }
 
 async function getGuide() {
   const now     = Date.now();
   const headers = buildHeaders();
 
-  // Refresh channel list if stale
   if (!channelsCache || now - channelsFetchedAt >= GUIDE_TTL_MS) {
     try {
       channelsCache     = await fetchChannels(headers);
       channelsFetchedAt = now;
-      nowPlayingCache   = null; // invalidate so callSign map re-resolves
+      nowPlayingCache   = null;
     } catch (err) {
       console.error('[LiveTV] guide fetch error:', err.message);
       if (!channelsCache) return { channels: [] };
     }
   }
 
-  // Refresh now-playing if stale
   if (!nowPlayingCache || now - nowPlayingFetchedAt >= NOW_PLAYING_TTL_MS) {
     try {
       nowPlayingCache     = await fetchNowPlaying(headers);
@@ -87,11 +107,11 @@ async function getGuide() {
   return {
     channels: channelsCache.map(ch => {
       const prog   = nowPlayingCache?.[ch.callSign] || nowPlayingCache?.[ch.number];
-      const result = { ratingKey: ch.ratingKey, number: ch.number, title: ch.title, thumb: ch.thumb };
+      const result = { channelId: ch.channelId, number: ch.number, title: ch.title, thumb: ch.thumb };
       if (prog) result.nowPlaying = prog;
       return result;
     }),
   };
 }
 
-module.exports = { getGuide };
+module.exports = { getGuide, tuneChannel };

@@ -15,6 +15,7 @@ const syncText    = document.getElementById('sync-text');
 let isSyncing        = false;
 let syncTimer        = null;
 let currentKey       = null;
+let activeLiveTvChannel = null; // channel number for guide highlighting
 let hlsInstance      = null;
 let isHost           = false;
 let roomType         = 'movie';
@@ -452,6 +453,9 @@ function applyLiveTvState(state) {
   if (liveTvInfo) liveTvInfo.style.display = 'block';
   if (liveTvChannelTitle) liveTvChannelTitle.textContent = state.liveTvChannelTitle || '';
 
+  // Track the active channel number for guide highlighting
+  activeLiveTvChannel = state.liveTvChannel || null;
+
   // Channel change → reload stream via Plex transcode proxy
   if (state.movieKey && state.movieKey !== currentKey) {
     currentKey = state.movieKey;
@@ -543,11 +547,11 @@ function renderGuide() {
     return;
   }
   list.innerHTML = guideChannels.map(ch => {
-    const isActive  = ch.ratingKey === currentKey;
+    const isActive  = ch.number === activeLiveTvChannel;
     const clickable = isHost;
     return `
       <div class="guide-channel-item${isActive ? ' active' : ''}${clickable ? ' clickable' : ''}"
-           data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}" data-ratingkey="${esc(ch.ratingKey || '')}">
+           data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}" data-channelid="${esc(ch.channelId || '')}">
         <span class="guide-channel-num">${esc(ch.number)}</span>
         <div class="guide-channel-info">
           <span class="guide-channel-name">${esc(ch.title || ch.number)}</span>
@@ -563,7 +567,7 @@ function renderGuide() {
         socket.emit('select-livetv-channel', {
           channel:      item.dataset.channel,
           channelTitle: item.dataset.title,
-          ratingKey:    item.dataset.ratingkey
+          channelId:    item.dataset.channelid
         });
         closeGuide();
       });
@@ -1161,7 +1165,7 @@ async function loadChannels() {
       return;
     }
     list.innerHTML = channels.map(ch => `
-      <div class="episode-item" data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}" data-ratingkey="${esc(ch.ratingKey || '')}" style="cursor:pointer">
+      <div class="episode-item" data-channel="${esc(ch.number)}" data-title="${esc(ch.title || ch.number)}" data-channelid="${esc(ch.channelId || '')}" style="cursor:pointer">
         <div class="episode-info">
           <span class="episode-title">${esc(ch.number)} ${esc(ch.title || '')}</span>
         </div>
@@ -1172,7 +1176,7 @@ async function loadChannels() {
         socket.emit('select-livetv-channel', {
           channel:      item.dataset.channel,
           channelTitle: item.dataset.title,
-          ratingKey:    item.dataset.ratingkey
+          channelId:    item.dataset.channelid
         });
         document.getElementById('channel-modal').style.display = 'none';
       });
