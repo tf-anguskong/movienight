@@ -53,6 +53,7 @@ class Room {
     this.liveTvChannel      = null;  // e.g. '7.1'
     this.liveTvChannelTitle = null;  // e.g. 'KIRO/CBS'
     this.liveTvChannelId    = null;  // DVR channel ID for re-tuning
+    this.liveTvSubKey       = null;  // Plex MediaSubscription key for current tune
     this.liveTvRetuneTimer  = null;  // proactive retune interval handle
     this.movieKey       = null;
     this.movieTitle     = null;
@@ -184,16 +185,27 @@ function stopLiveTvRetuneTimer(room) {
 
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
+  const liveTvManager = require('./livetv-manager');
   try {
+    // DELETE the current subscription so Plex creates a genuinely fresh session.
+    // Without this, retune returns the same ratingKey and the dying session continues.
+    if (room.liveTvSubKey) {
+      await liveTvManager.stopSubscription(room.liveTvSubKey).catch(() => {});
+      await new Promise(r => setTimeout(r, 200));
+    }
     clearRoomManifest(room.id);
-    const liveTvManager = require('./livetv-manager');
-    const ratingKey = await liveTvManager.tuneChannel(room.liveTvChannelId);
-    room.movieKey   = ratingKey;
-    room.playing    = true;
-    room.position   = 0;
-    room.lastUpdate = Date.now();
+    const { ratingKey, subKey } = await liveTvManager.tuneChannel(room.liveTvChannelId);
+    const keyChanged   = ratingKey !== room.movieKey;
+    room.liveTvSubKey  = subKey;
+    room.movieKey      = ratingKey;
+    room.playing       = true;
+    room.position      = 0;
+    room.lastUpdate    = Date.now();
+    // If ratingKey is unchanged the clients won't detect the new session from state
+    // alone — force them to reload the HLS manifest explicitly.
+    if (!keyChanged) room.broadcast(io, 'livetv-reload');
     room.broadcastState(io);
-    console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey}`);
+    console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey})`);
   } catch (err) {
     console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
   }
@@ -436,17 +448,18 @@ function setupSync(io, enabledRoomTypes) {
       stopLiveTvRetuneTimer(room); // clear any retune timer from previous channel
       try {
         const liveTvManager = require('./livetv-manager');
-        const ratingKey = await liveTvManager.tuneChannel(channelId);
+        const { ratingKey, subKey } = await liveTvManager.tuneChannel(channelId);
         room.liveTvChannel      = String(channel || '').slice(0, 20);
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
         room.liveTvChannelId    = channelId;
+        room.liveTvSubKey       = subKey;
         room.movieKey   = ratingKey;
         room.playing    = true;
         room.position   = 0;
         room.lastUpdate = Date.now();
         room.broadcastState(io);
         startLiveTvRetuneTimer(room, io); // proactively retune every 2 min
-        console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey})`);
+        console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);
       } catch (err) {
         console.error(`[Room] Failed to tune channel ${channel}:`, err.message);
         socket.emit('error-message', `Failed to tune channel: ${err.message}`);

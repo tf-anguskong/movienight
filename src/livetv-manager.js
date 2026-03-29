@@ -62,7 +62,20 @@ async function fetchNowPlaying(headers) {
   return programs;
 }
 
-// Tune a live TV channel via Plex DVR — returns the session UUID
+// Stop a DVR subscription so the next tune creates a genuinely fresh session.
+// Plex deduplicates tune calls — without deleting first, retune returns the
+// same existing subscription (and its already-running expiry clock).
+async function stopSubscription(subKey) {
+  const headers = buildHeaders();
+  await axios.delete(`${PLEX_HOST}/media/subscriptions/${subKey}`, {
+    headers,
+    params: { 'X-Plex-Client-Identifier': CLIENT_ID },
+    timeout: 5000,
+  });
+  console.log(`[LiveTV] Stopped subscription ${subKey}`);
+}
+
+// Tune a live TV channel via Plex DVR — returns { ratingKey, subKey }
 async function tuneChannel(channelId) {
   const headers = buildHeaders();
   if (!cachedDvrKey) await fetchDvrInfo(headers);
@@ -75,12 +88,12 @@ async function tuneChannel(channelId) {
   });
 
   // The tune response nests metadata under MediaSubscription[0].MediaGrabOperation[0].Metadata
-  const meta = data?.MediaContainer?.MediaSubscription?.[0]?.MediaGrabOperation?.[0]?.Metadata;
+  const sub  = data?.MediaContainer?.MediaSubscription?.[0];
+  const meta = sub?.MediaGrabOperation?.[0]?.Metadata;
   if (!meta?.ratingKey) throw new Error('Tune response missing ratingKey');
 
-  // ratingKey is numeric (e.g. "7159") — used with /library/metadata/{ratingKey} for transcoding
-  console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey}`);
-  return meta.ratingKey;
+  console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey} (sub ${sub.key})`);
+  return { ratingKey: meta.ratingKey, subKey: sub.key };
 }
 
 async function getGuide() {
@@ -118,4 +131,4 @@ async function getGuide() {
   };
 }
 
-module.exports = { getGuide, tuneChannel };
+module.exports = { getGuide, tuneChannel, stopSubscription };

@@ -115,6 +115,13 @@ socket.on('kicked', () => {
 
 socket.on('state', applyState);
 
+// Server-side retune produced the same ratingKey — HLS manifest cache won't
+// detect a change, so the server broadcasts this to force a fresh manifest fetch.
+socket.on('livetv-reload', () => {
+  if (roomType !== 'livetv' || !currentKey) return;
+  loadLiveTvHls(currentKey);
+});
+
 socket.on('room-error', (msg) => {
   alert(msg + '\n\nRedirecting to lobby.');
   window.location.href = '/';
