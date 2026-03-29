@@ -368,7 +368,7 @@ function loadLiveTvHls(ratingKey) {
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
 
-  const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8`;
+  const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8?live=1`;
 
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
     hlsInstance = new Hls({ enableWorker: true });
@@ -387,7 +387,7 @@ function loadLiveTvHls(ratingKey) {
       } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
         networkRetried = true;
         console.warn('[LiveTV] Network error, busting manifest:', d.details);
-        const bustSrc = `${src}?bust=1`;
+        const bustSrc = `${src}&bust=1`;
         setTimeout(() => {
           if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
           hlsInstance = new Hls({ enableWorker: true });
@@ -415,6 +415,7 @@ function loadLiveTvHls(ratingKey) {
     tryPlay();
   }
 }
+
 
 function applyLiveTvState(state) {
   document.getElementById('yt-player-container').style.display = 'none';

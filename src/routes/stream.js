@@ -4,6 +4,8 @@ const axios = require('axios');
 
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
+const LIVETV_PLEX_URL   = process.env.LIVETV_PLEX_HOST  || PLEX_URL;
+const LIVETV_PLEX_TOKEN = process.env.LIVETV_PLEX_TOKEN || PLEX_TOKEN;
 const CLIENT_ID = process.env.PLEX_CLIENT_ID || 'movienight-app';
 
 // Cache the master manifest per room+movie so only the first viewer
@@ -34,16 +36,16 @@ setInterval(() => {
 // Send periodic timeline pings so Plex doesn't clean up the transcode session.
 // Without these, Plex kills the session after ~60s of perceived inactivity,
 // causing 404s on segment requests and forcing a full session restart.
-function startKeepalive(cacheKey, sessionId, ratingKey, isLive) {
+function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken) {
   stopKeepalive(cacheKey);
   const timer = setInterval(() => {
-    axios.get(`${PLEX_URL}/:/timeline`, {
+    axios.get(`${plexBaseUrl}/:/timeline`, {
       params: {
-        'X-Plex-Token': PLEX_TOKEN,
+        'X-Plex-Token': plexToken,
         'X-Plex-Client-Identifier': CLIENT_ID,
         'X-Plex-Session-Identifier': sessionId,
         ratingKey,
-        key: isLive ? `/livetv/sessions/${ratingKey}` : `/library/metadata/${ratingKey}`,
+        key: `/library/metadata/${ratingKey}`,
         state: 'playing',
         time: 0,
         duration: 0,
@@ -68,8 +70,8 @@ function clearRoomManifest(roomId) {
       // potentially stuck/terminating one with the same session ID.
       const session = activeSessions.get(key);
       if (session) {
-        axios.get(`${PLEX_URL}/video/:/transcode/universal/stop`, {
-          params: { 'X-Plex-Token': PLEX_TOKEN, session: session.sessionId }
+        axios.get(`${session.plexBaseUrl}/video/:/transcode/universal/stop`, {
+          params: { 'X-Plex-Token': session.plexToken, session: session.sessionId }
         }).catch(() => {}); // ignore errors — best effort
       }
       manifestCache.delete(key);
@@ -87,7 +89,7 @@ function clearRoomManifest(roomId) {
 // our proxy. baseDir is the directory of the m3u8 being rewritten,
 // needed to resolve relative segment paths (no leading slash).
 
-function rewritePlexUrl(url, baseDir) {
+function rewritePlexUrl(url, baseDir, proxyPrefix = '/api/stream/proxy') {
   try {
     let plexPath;
     if (url.startsWith('http')) {
@@ -104,20 +106,20 @@ function rewritePlexUrl(url, baseDir) {
     } else {
       return url;
     }
-    return `/api/stream/proxy${plexPath}`;
+    return `${proxyPrefix}${plexPath}`;
   } catch {
     return url;
   }
 }
 
-function rewriteM3u8(content, baseDir) {
+function rewriteM3u8(content, baseDir, proxyPrefix = '/api/stream/proxy') {
   return content
-    .replace(/URI="([^"]+)"/g, (_, url) => `URI="${rewritePlexUrl(url, baseDir)}"`)
+    .replace(/URI="([^"]+)"/g, (_, url) => `URI="${rewritePlexUrl(url, baseDir, proxyPrefix)}"`)
     .split('\n')
     .map(line => {
       const t = line.trim();
       if (!t || t.startsWith('#')) return line;
-      return rewritePlexUrl(t, baseDir);
+      return rewritePlexUrl(t, baseDir, proxyPrefix);
     })
     .join('\n');
 }
@@ -133,8 +135,13 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   // Plex session. Evict the stale manifest so we start over below.
   // ?offset=<ms> tells Plex where to begin transcoding so the client can seek
   // straight to the current playback position after reconnecting.
-  const bust     = !!req.query.bust;
-  const offsetMs = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const bust        = !!req.query.bust;
+  const offsetMs    = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const isLive      = !!req.query.live;
+  const plexBaseUrl = isLive ? LIVETV_PLEX_URL   : PLEX_URL;
+  const plexToken   = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
+  const proxyPrefix = isLive ? '/api/stream/proxy-live' : '/api/stream/proxy';
+
   if (bust) {
     stopKeepalive(cacheKey);
     manifestCache.delete(cacheKey);
@@ -171,7 +178,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 
   const fetchManifest = async () => {
     const params = {
-      'X-Plex-Token': PLEX_TOKEN,
+      'X-Plex-Token': plexToken,
       'X-Plex-Client-Identifier': CLIENT_ID,
       'X-Plex-Session-Identifier': sessionId,
       'X-Plex-Product': 'Movie Night',
@@ -200,9 +207,9 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
       .join('&');
 
-    const transcodeUrl = `${PLEX_URL}/video/:/transcode/universal/start.m3u8?${qs}`;
+    const transcodeUrl = `${plexBaseUrl}/video/:/transcode/universal/start.m3u8?${qs}`;
     console.log('[HLS] Starting session:', transcodeUrl.replace(
-      new RegExp(PLEX_TOKEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'REDACTED'
+      new RegExp(plexToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'REDACTED'
     ));
 
     const plexRes = await axios.get(transcodeUrl, {
@@ -212,12 +219,12 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
         'X-Plex-Product': 'Movie Night',
         'X-Plex-Platform': 'Chrome',
         'X-Plex-Device-Name': 'Movie Night',
-        'X-Plex-Token': PLEX_TOKEN
+        'X-Plex-Token': plexToken
       }
     });
 
-    const baseDir  = '/video/:/transcode/universal/';
-    return rewriteM3u8(plexRes.data, baseDir);
+    const baseDir = '/video/:/transcode/universal/';
+    return rewriteM3u8(plexRes.data, baseDir, proxyPrefix);
   };
 
   const promise = fetchManifest();
@@ -226,8 +233,8 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   try {
     const manifest = await promise;
     manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
-    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive: false });
-    startKeepalive(cacheKey, sessionId, ratingKey, false);
+    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive, plexBaseUrl, plexToken });
+    startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken);
     manifestPending.delete(cacheKey);
     res.send(manifest);
   } catch (err) {
@@ -252,7 +259,7 @@ function filterProxyParams(query) {
 }
 
 // ── General Plex proxy (HLS segments & sub-manifests) ──────
-router.get('/proxy/*', async (req, res) => {
+async function handleProxy(req, res, plexBaseUrl, plexToken, proxyPrefix) {
   const plexPath = '/' + req.params[0];
 
   if (!ALLOWED_PROXY_PATH.test(plexPath)) {
@@ -265,8 +272,8 @@ router.get('/proxy/*', async (req, res) => {
   try {
     const response = await axios({
       method: 'GET',
-      url: `${PLEX_URL}${plexPath}`,
-      params: { ...filterProxyParams(req.query), 'X-Plex-Token': PLEX_TOKEN },
+      url: `${plexBaseUrl}${plexPath}`,
+      params: { ...filterProxyParams(req.query), 'X-Plex-Token': plexToken },
       responseType: 'stream',
       timeout: 5 * 60 * 1000,
       maxContentLength: Infinity,
@@ -287,7 +294,7 @@ router.get('/proxy/*', async (req, res) => {
       response.data.on('data', c => chunks.push(c));
       response.data.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
-        res.send(rewriteM3u8(text, baseDir));
+        res.send(rewriteM3u8(text, baseDir, proxyPrefix));
       });
     } else {
       // Stream directly (TS, m4s segments, etc.)
@@ -301,7 +308,10 @@ router.get('/proxy/*', async (req, res) => {
       res.status(status).send('Proxy error');
     }
   }
-});
+}
+
+router.get('/proxy/*',      (req, res) => handleProxy(req, res, PLEX_URL,        PLEX_TOKEN,        '/api/stream/proxy'));
+router.get('/proxy-live/*', (req, res) => handleProxy(req, res, LIVETV_PLEX_URL, LIVETV_PLEX_TOKEN, '/api/stream/proxy-live'));
 
 // ── Thumbnail proxy ────────────────────────────────────────
 router.get('/thumb/:ratingKey', async (req, res) => {
