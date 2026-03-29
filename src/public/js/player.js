@@ -17,6 +17,7 @@ let syncTimer        = null;
 let currentKey       = null;
 let activeLiveTvChannel = null; // channel number for guide highlighting
 let hlsInstance      = null;
+let dashInstance     = null;
 let isHost           = false;
 let roomType         = 'movie';
 let roomSettings     = { playbackLocked: false, reactionsEnabled: true };
@@ -273,6 +274,7 @@ function tryPlay() {
 }
 
 function loadHls(ratingKey, targetTime, shouldPlay) {
+  if (dashInstance) { dashInstance.destroy(); dashInstance = null; }
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8`;
@@ -362,65 +364,54 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
   }
 }
 
-// ── Live TV player (via Plex transcode proxy) ────────────────
-function loadLiveTvHls(ratingKey) {
+// ── Live TV player (DASH via Plex transcode proxy) ───────────
+function loadLiveTvDash(sessionUuid) {
+  if (dashInstance) { dashInstance.destroy(); dashInstance = null; }
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
 
-  const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8?live=1`;
+  const src = `/api/stream/dash/${roomId}/${sessionUuid}/manifest.mpd`;
 
-  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-    hlsInstance = new Hls({
-      enableWorker:           true,
-      lowLatencyMode:         true,
-      liveSyncDuration:       4,
-      liveMaxLatencyDuration: 10,
-      liveBackBufferLength:   30,
-    });
-    hlsInstance.loadSource(src);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      tryPlay();
-      releaseSyncLock();
-    });
-    let networkRetried = false;
-    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal) return;
-      if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        console.warn('[LiveTV] Media error, recovering:', d.details);
-        hlsInstance.recoverMediaError();
-      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
-        networkRetried = true;
-        console.warn('[LiveTV] Network error, busting manifest and restarting:', d.details);
-        const bustSrc = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8?live=1&bust=1`;
-        setTimeout(() => {
-          if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-          hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true, liveSyncDuration: 4, liveMaxLatencyDuration: 10 });
-          hlsInstance.loadSource(bustSrc);
-          hlsInstance.attachMedia(video);
-          hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
-          hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
-            if (!d2.fatal) return;
-            console.error('[LiveTV] Fatal after bust:', d2.type, d2.details);
-            noMovieText.textContent = `Stream error: ${d2.details} — try refreshing.`;
-            noMovie.style.display = 'block';
-            video.style.display = 'none';
-            currentKey = null;
-          });
-        }, 2000);
-      } else {
-        console.error('[LiveTV] Fatal:', d.type, d.details);
-        noMovieText.textContent = `Stream error: ${d.details} — try refreshing.`;
-        noMovie.style.display = 'block';
-        video.style.display = 'none';
-        currentKey = null;
-      }
-    });
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = src;
+  dashInstance = dashjs.MediaPlayer().create();
+  dashInstance.initialize(video, src, true);
+  dashInstance.updateSettings({
+    streaming: {
+      delay: { liveDelay: 4 },
+      liveCatchup: { enabled: true, maxDrift: 10 },
+      buffer: { bufferTimeAtTopQuality: 30 }
+    }
+  });
+
+  dashInstance.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
     tryPlay();
-  }
+    releaseSyncLock();
+  });
+
+  let networkRetried = false;
+  dashInstance.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+    console.error('[LiveTV] DASH error:', e.error);
+    if (!networkRetried) {
+      networkRetried = true;
+      setTimeout(() => {
+        if (dashInstance) { dashInstance.destroy(); dashInstance = null; }
+        const bustSrc = `/api/stream/dash/${roomId}/${sessionUuid}/manifest.mpd?bust=1`;
+        dashInstance = dashjs.MediaPlayer().create();
+        dashInstance.initialize(video, bustSrc, true);
+        dashInstance.on(dashjs.MediaPlayer.events.ERROR, () => {
+          noMovieText.textContent = 'Stream error — try refreshing.';
+          noMovie.style.display = 'block';
+          video.style.display = 'none';
+          currentKey = null;
+        });
+      }, 2000);
+    } else {
+      noMovieText.textContent = 'Stream error — try refreshing.';
+      noMovie.style.display = 'block';
+      video.style.display = 'none';
+      currentKey = null;
+    }
+  });
 }
 
 function applyLiveTvState(state) {
@@ -459,7 +450,7 @@ function applyLiveTvState(state) {
   // Channel change → reload stream via Plex transcode proxy
   if (state.movieKey && state.movieKey !== currentKey) {
     currentKey = state.movieKey;
-    loadLiveTvHls(state.movieKey);
+    loadLiveTvDash(state.movieKey);
   }
 
   // Compute target from server state — same smooth extrapolation as movie sync

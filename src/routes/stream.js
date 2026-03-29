@@ -110,6 +110,22 @@ function rewritePlexUrl(url, baseDir) {
   }
 }
 
+// ── MPD (DASH) URL rewriting ───────────────────────────────
+// Rewrites Plex-internal URLs in DASH manifests (XML-based).
+function rewriteMpd(xmlContent, baseDir) {
+  return xmlContent
+    // Rewrite URLs in common attributes
+    .replace(/(initialization|media|sourceURL|href)="([^"]+)"/g, (match, attr, url) => {
+      // Skip DASH template tokens like $Number$, $Time$, etc.
+      if (/\$\w+/.test(url) && !/^https?:/.test(url) && !url.startsWith('/')) return match;
+      return `${attr}="${rewritePlexUrl(url, baseDir)}"`;
+    })
+    // Rewrite <BaseURL>...</BaseURL> element text
+    .replace(/<BaseURL>([^<]+)<\/BaseURL>/g, (_, url) => {
+      return `<BaseURL>${rewritePlexUrl(url.trim(), baseDir)}</BaseURL>`;
+    });
+}
+
 function rewriteM3u8(content, baseDir) {
   return content
     .replace(/URI="([^"]+)"/g, (_, url) => `URI="${rewritePlexUrl(url, baseDir)}"`)
@@ -134,7 +150,6 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   // ?offset=<ms> tells Plex where to begin transcoding so the client can seek
   // straight to the current playback position after reconnecting.
   const bust     = !!req.query.bust;
-  const isLive   = req.query.live === '1';
   const offsetMs = Math.max(0, parseInt(req.query.offset, 10) || 0);
   if (bust) {
     stopKeepalive(cacheKey);
@@ -182,7 +197,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       'X-Plex-Device-Name': 'Movie Night',
       'X-Plex-Version': '1.0.0',
       hasMDE: '1',
-      path: isLive ? `/livetv/sessions/${ratingKey}` : `/library/metadata/${ratingKey}`,
+      path: `/library/metadata/${ratingKey}`,
       videoResolution: '1920x1080',
       maxVideoBitrate: '8000',
       videoCodec: 'h264',
@@ -192,7 +207,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       mediaIndex: '0',
       partIndex: '0',
       fastSeek: '1',
-      ...(!isLive && offsetMs > 0 ? { offset: offsetMs } : {})
+      ...(offsetMs > 0 ? { offset: offsetMs } : {})
     };
 
     // Build query string manually — axios encodes '/' as '%2F' in param values,
@@ -227,14 +242,112 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   try {
     const manifest = await promise;
     manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
-    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive });
-    startKeepalive(cacheKey, sessionId, ratingKey, isLive);
+    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive: false });
+    startKeepalive(cacheKey, sessionId, ratingKey, false);
     manifestPending.delete(cacheKey);
     res.send(manifest);
   } catch (err) {
     manifestPending.delete(cacheKey);
     console.error('[HLS] Start error:', err.response?.status, err.message);
     res.status(500).send('HLS error');
+  }
+});
+
+// ── DASH transcode start (live TV) ─────────────────────────
+router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
+  const { roomId, ratingKey } = req.params;
+  if (!/^[\w-]+$/.test(ratingKey)) return res.status(400).send('Invalid ratingKey');
+  const sessionId = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey.slice(0, 24)}`;
+  const cacheKey  = `${roomId}-${ratingKey}`;
+
+  const bust = !!req.query.bust;
+  if (bust) {
+    stopKeepalive(cacheKey);
+    manifestCache.delete(cacheKey);
+    activeSessions.delete(cacheKey);
+    console.log(`[DASH] Cache busted for ${cacheKey}`);
+  }
+
+  res.setHeader('Content-Type', 'application/dash+xml');
+  res.setHeader('Cache-Control', 'no-cache');
+
+  const cached = manifestCache.get(cacheKey);
+  if (cached) {
+    if (Date.now() - cached.cachedAt < MANIFEST_TTL_MS) return res.send(cached.manifest);
+    stopKeepalive(cacheKey);
+    manifestCache.delete(cacheKey);
+    activeSessions.delete(cacheKey);
+  }
+
+  if (manifestPending.has(cacheKey)) {
+    try {
+      return res.send(await manifestPending.get(cacheKey));
+    } catch {
+      return res.status(500).send('DASH error');
+    }
+  }
+
+  const fetchManifest = async () => {
+    const params = {
+      'X-Plex-Token': PLEX_TOKEN,
+      'X-Plex-Client-Identifier': CLIENT_ID,
+      'X-Plex-Session-Identifier': sessionId,
+      'X-Plex-Product': 'Movie Night',
+      'X-Plex-Platform': 'Chrome',
+      'X-Plex-Platform-Version': '120.0',
+      'X-Plex-Device': 'Windows',
+      'X-Plex-Device-Name': 'Movie Night',
+      'X-Plex-Version': '1.0.0',
+      hasMDE: '1',
+      path: `/livetv/sessions/${ratingKey}`,
+      protocol: 'dash',
+      copyts: '0',
+      mediaIndex: '0',
+      partIndex: '0',
+      fastSeek: '1',
+      directPlay: '0',
+      directStream: '0',
+      location: 'lan',
+    };
+
+    const qs = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${k === 'path' ? v : encodeURIComponent(v)}`)
+      .join('&');
+
+    const transcodeUrl = `${PLEX_URL}/video/:/transcode/universal/start.mpd?${qs}`;
+    console.log('[DASH] Starting session:', transcodeUrl.replace(
+      new RegExp(PLEX_TOKEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'REDACTED'
+    ));
+
+    const plexRes = await axios.get(transcodeUrl, {
+      headers: {
+        Accept: 'application/dash+xml',
+        'X-Plex-Client-Identifier': CLIENT_ID,
+        'X-Plex-Product': 'Movie Night',
+        'X-Plex-Platform': 'Chrome',
+        'X-Plex-Device-Name': 'Movie Night',
+        'X-Plex-Token': PLEX_TOKEN
+      }
+    });
+
+    const baseDir = '/video/:/transcode/universal/';
+    return rewriteMpd(plexRes.data, baseDir);
+  };
+
+  const promise = fetchManifest();
+  manifestPending.set(cacheKey, promise);
+
+  try {
+    const manifest = await promise;
+    manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
+    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive: true });
+    startKeepalive(cacheKey, sessionId, ratingKey, true);
+    manifestPending.delete(cacheKey);
+    res.send(manifest);
+  } catch (err) {
+    manifestPending.delete(cacheKey);
+    console.error('[DASH] Start error:', err.response?.status, err.message);
+    res.status(500).send('DASH error');
   }
 });
 
@@ -262,6 +375,7 @@ router.get('/proxy/*', async (req, res) => {
 
   const looksLikeM3u8 =
     plexPath.endsWith('.m3u8') || plexPath.includes('/index.m3u8');
+  const looksLikeMpd = plexPath.endsWith('.mpd');
 
   try {
     const response = await axios({
@@ -277,22 +391,23 @@ router.get('/proxy/*', async (req, res) => {
     const ct = response.headers['content-type'] || '';
     const isM3u8 =
       looksLikeM3u8 || ct.includes('mpegURL') || ct.includes('m3u8');
+    const isMpd =
+      looksLikeMpd || ct.includes('dash+xml') || ct.includes('mpd');
 
     res.setHeader('Content-Type', ct || 'application/octet-stream');
     res.setHeader('Cache-Control', 'no-cache');
 
-    if (isM3u8) {
+    if (isM3u8 || isMpd) {
       // Buffer, rewrite internal URLs, send
-      // Base dir = directory of this m3u8 path, for resolving relative segment URLs
       const baseDir = plexPath.substring(0, plexPath.lastIndexOf('/') + 1);
       const chunks = [];
       response.data.on('data', c => chunks.push(c));
       response.data.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
-        res.send(rewriteM3u8(text, baseDir));
+        res.send(isM3u8 ? rewriteM3u8(text, baseDir) : rewriteMpd(text, baseDir));
       });
     } else {
-      // Stream directly (TS segments, etc.)
+      // Stream directly (TS, m4s segments, etc.)
       response.data.pipe(res);
       req.on('close', () => response.data.destroy());
     }
