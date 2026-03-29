@@ -398,15 +398,15 @@ function setupSync(io, enabledRoomTypes) {
       clearRoomManifest(room.id); // stop any existing Plex transcode session
       try {
         const liveTvManager = require('./livetv-manager');
-        const sessionUuid = await liveTvManager.tuneChannel(channelId);
+        const ratingKey = await liveTvManager.tuneChannel(channelId);
         room.liveTvChannel      = String(channel || '').slice(0, 20);
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
-        room.movieKey   = sessionUuid;
+        room.movieKey   = ratingKey;
         room.playing    = true;
         room.position   = 0;
         room.lastUpdate = Date.now();
         room.broadcastState(io);
-        console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (session=${sessionUuid})`);
+        console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey})`);
       } catch (err) {
         console.error(`[Room] Failed to tune channel ${channel}:`, err.message);
         socket.emit('error-message', `Failed to tune channel: ${err.message}`);

@@ -71,12 +71,11 @@ async function tuneChannel(channelId) {
 
   // The tune response nests metadata under MediaSubscription[0].MediaGrabOperation[0].Metadata
   const meta = data?.MediaContainer?.MediaSubscription?.[0]?.MediaGrabOperation?.[0]?.Metadata;
-  if (!meta?.key) throw new Error('Tune response missing session key');
+  if (!meta?.ratingKey) throw new Error('Tune response missing ratingKey');
 
-  // key is like "/livetv/sessions/5e3a8fa6-3066-48eb-9630-49e3879c0f50"
-  const uuid = meta.key.replace('/livetv/sessions/', '');
-  console.log(`[LiveTV] Tuned channel ${channelId} → session ${uuid}`);
-  return uuid;
+  // ratingKey is numeric (e.g. "7159") — used with /library/metadata/{ratingKey} for transcoding
+  console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey}`);
+  return meta.ratingKey;
 }
 
 async function getGuide() {
