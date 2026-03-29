@@ -396,18 +396,36 @@ function loadLiveTvHls(ratingKey) {
           hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
           hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
             if (!d2.fatal) return;
-            noMovieText.textContent = `Stream error: ${d2.details} — try refreshing.`;
-            noMovie.style.display = 'block';
-            video.style.display = 'none';
-            currentKey = null;
+            // Bust + retry also failed — the DVR ratingKey is dead.
+            // Host requests a retune; guests wait for the rebroadcast.
+            if (isHost) {
+              noMovieText.textContent = 'Reconnecting to channel…';
+              noMovie.style.display = 'block';
+              video.style.display = 'none';
+              currentKey = null;
+              socket.emit('retune-livetv');
+            } else {
+              noMovieText.textContent = 'Stream interrupted — reconnecting…';
+              noMovie.style.display = 'block';
+              video.style.display = 'none';
+              currentKey = null;
+            }
           });
         }, 2000);
       } else {
         console.error('[LiveTV] Fatal:', d.type, d.details);
-        noMovieText.textContent = `Stream error: ${d.details} — try refreshing.`;
-        noMovie.style.display = 'block';
-        video.style.display = 'none';
-        currentKey = null;
+        if (isHost) {
+          noMovieText.textContent = 'Reconnecting to channel…';
+          noMovie.style.display = 'block';
+          video.style.display = 'none';
+          currentKey = null;
+          socket.emit('retune-livetv');
+        } else {
+          noMovieText.textContent = 'Stream interrupted — reconnecting…';
+          noMovie.style.display = 'block';
+          video.style.display = 'none';
+          currentKey = null;
+        }
       }
     });
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

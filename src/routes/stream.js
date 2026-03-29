@@ -38,7 +38,12 @@ setInterval(() => {
 // causing 404s on segment requests and forcing a full session restart.
 function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken) {
   stopKeepalive(cacheKey);
+  const startedAt = Date.now();
   const timer = setInterval(() => {
+    const elapsedMs = Date.now() - startedAt;
+    // Timeline ping — send advancing time so Plex knows the client is actively
+    // consuming the stream. Sending time:0 forever causes Plex to treat the
+    // session as inactive and terminate it after ~3 minutes (observed for live TV).
     axios.get(`${plexBaseUrl}/:/timeline`, {
       params: {
         'X-Plex-Token': plexToken,
@@ -47,11 +52,17 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
         ratingKey,
         key: `/library/metadata/${ratingKey}`,
         state: 'playing',
-        time: 0,
-        duration: 0,
+        time: elapsedMs,
+        duration: isLive ? 0 : undefined,
         hasMDE: 1
       }
-    }).catch(() => {}); // ignore errors — best effort
+    }).catch(() => {});
+    // For live TV, also hit the transcode ping endpoint as belt-and-suspenders
+    if (isLive) {
+      axios.get(`${plexBaseUrl}/video/:/transcode/universal/ping`, {
+        params: { 'X-Plex-Token': plexToken, session: sessionId }
+      }).catch(() => {});
+    }
   }, KEEPALIVE_MS);
   keepaliveTimers.set(cacheKey, timer);
 }

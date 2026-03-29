@@ -52,6 +52,7 @@ class Room {
     this.roomType       = 'movie'; // 'movie' | 'youtube' | 'tv' | 'livetv'
     this.liveTvChannel      = null;  // e.g. '7.1'
     this.liveTvChannelTitle = null;  // e.g. 'KIRO/CBS'
+    this.liveTvChannelId    = null;  // DVR channel ID for re-tuning
     this.movieKey       = null;
     this.movieTitle     = null;
     this.partId         = null;
@@ -401,6 +402,7 @@ function setupSync(io, enabledRoomTypes) {
         const ratingKey = await liveTvManager.tuneChannel(channelId);
         room.liveTvChannel      = String(channel || '').slice(0, 20);
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
+        room.liveTvChannelId    = channelId;
         room.movieKey   = ratingKey;
         room.playing    = true;
         room.position   = 0;
@@ -410,6 +412,29 @@ function setupSync(io, enabledRoomTypes) {
       } catch (err) {
         console.error(`[Room] Failed to tune channel ${channel}:`, err.message);
         socket.emit('error-message', `Failed to tune channel: ${err.message}`);
+      }
+    });
+
+    // ── Re-tune live TV when session dies (host only) ──────
+    // Triggered by the client when the HLS stream fails unrecoverably.
+    // The DVR ratingKey has expired; we need to re-tune to get a fresh one.
+    socket.on('retune-livetv', async () => {
+      const room = socketToRoom.get(socket.id);
+      if (!room || socket.id !== room.hostSocketId || room.roomType !== 'livetv') return;
+      if (!room.liveTvChannelId) return;
+      try {
+        clearRoomManifest(room.id);
+        const liveTvManager = require('./livetv-manager');
+        const ratingKey = await liveTvManager.tuneChannel(room.liveTvChannelId);
+        room.movieKey   = ratingKey;
+        room.playing    = true;
+        room.position   = 0;
+        room.lastUpdate = Date.now();
+        room.broadcastState(io);
+        console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey}`);
+      } catch (err) {
+        console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
+        socket.emit('error-message', `Failed to retune channel: ${err.message}`);
       }
     });
 
