@@ -371,7 +371,7 @@ body {
 
 /* ── WATCH PAGE ──────────────────────────────────────────── */
 
-.watch-page { height: 100vh; overflow: hidden; }
+.watch-page { height: 100vh; height: 100dvh; overflow: hidden; }
 
 .watch-layout { display: flex; height: 100%; }
 
@@ -765,6 +765,12 @@ body {
 @media (max-width: 520px) {
   .intermission-card { flex-direction: column; align-items: center; text-align: center; padding: 2rem 1.5rem; }
   .intermission-timer { font-size: 2.8rem; }
+}
+
+/* Mobile landscape — collapse sidebar so video fills the screen */
+@media (orientation: landscape) and (max-height: 500px) {
+  .watch-page { height: 100dvh; }
+  .sidebar { width: 0; padding: 0; border-right-color: transparent; overflow: hidden; }
 }
 
 /* Countdown overlay */
