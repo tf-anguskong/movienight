@@ -385,15 +385,18 @@ function loadLiveTvHls(ratingKey) {
       tryPlay();
       releaseSyncLock();
     });
-    let networkRetried = false;
+    let liveTvRetryCount = 0;
+    const LIVE_TV_MAX_RETRIES = 4;
     hlsInstance.on(Hls.Events.ERROR, (_, d) => {
       if (!d.fatal) return;
       if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
         console.warn('[LiveTV] Media error, recovering:', d.details);
         hlsInstance.recoverMediaError();
-      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
-        networkRetried = true;
-        console.warn('[LiveTV] Network error, busting manifest:', d.details);
+      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && liveTvRetryCount < LIVE_TV_MAX_RETRIES) {
+        liveTvRetryCount++;
+        // Exponential backoff: 1s, 2s, 4s, 8s
+        const delay = Math.pow(2, liveTvRetryCount - 1) * 1000;
+        console.warn(`[LiveTV] Network error, retry ${liveTvRetryCount}/${LIVE_TV_MAX_RETRIES} in ${delay}ms:`, d.details);
         const bustSrc = `${src}&bust=1`;
         setTimeout(() => {
           if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
@@ -403,7 +406,7 @@ function loadLiveTvHls(ratingKey) {
           hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
           hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
             if (!d2.fatal) return;
-            // Bust + retry also failed — the DVR ratingKey is dead.
+            // Retries exhausted — the DVR ratingKey is dead.
             // Host requests a retune; guests wait for the rebroadcast.
             if (isHost) {
               noMovieText.textContent = 'Reconnecting to channel…';
@@ -418,7 +421,7 @@ function loadLiveTvHls(ratingKey) {
               currentKey = null;
             }
           });
-        }, 2000);
+        }, delay);
       } else {
         console.error('[LiveTV] Fatal:', d.type, d.details);
         if (isHost) {

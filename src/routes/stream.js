@@ -19,7 +19,7 @@ const manifestPending  = new Map(); // cacheKey → Promise<string>
 const activeSessions   = new Map(); // cacheKey → { sessionId, ratingKey, isLive }
 const keepaliveTimers  = new Map(); // cacheKey → intervalId
 const MANIFEST_TTL_MS  = 4 * 60 * 60 * 1000; // 4 hours — evict stale manifests
-const KEEPALIVE_MS     = 8000; // ping Plex every 8s to prevent session cleanup
+const KEEPALIVE_MS     = 3000; // ping Plex every 3s for LiveTV to prevent session cleanup
 
 // Periodically evict manifests that haven't been used for MANIFEST_TTL_MS
 setInterval(() => {
@@ -66,23 +66,31 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
   }, KEEPALIVE_MS);
   keepaliveTimers.set(cacheKey, timer);
 
-  // For LiveTV, proactively refresh the session every 2 minutes
-  // to prevent Plex from killing it after ~3 minutes of inactivity
+  // For LiveTV, use a separate more aggressive keepalive timer (every 1.5s)
+  // to ensure Plex doesn't kill the session due to inactivity
   if (isLive) {
-    const refreshTimer = setInterval(() => {
-      console.log(`[HLS] Proactive session refresh for LiveTV ${cacheKey}`);
-      stopKeepalive(cacheKey);
-      manifestCache.delete(cacheKey);
-      activeSessions.delete(cacheKey);
-      // Also notify clients to reload
-      if (_io) {
-        // Emit to specific room if we can derive it from cacheKey
-        _io.emit('livetv-refresh-required', { cacheKey });
-      }
-    }, 2 * 60 * 1000); // 2 minutes
-    
-    // Store refresh timer so we can clear it
-    keepaliveTimers.set(cacheKey + '-refresh', refreshTimer);
+    const liveKeepalive = setInterval(() => {
+      // Additional transcode ping endpoint for LiveTV
+      axios.get(`${plexBaseUrl}/video/:/transcode/universal/ping`, {
+        params: { 'X-Plex-Token': plexToken, session: sessionId }
+      }).catch(() => {});
+      // Also hit the timeline with current time to keep session alive
+      const nowMs = Date.now() - startedAt;
+      axios.get(`${plexBaseUrl}/:/timeline`, {
+        params: {
+          'X-Plex-Token': plexToken,
+          'X-Plex-Client-Identifier': CLIENT_ID,
+          'X-Plex-Session-Identifier': sessionId,
+          ratingKey,
+          key: `/library/metadata/${ratingKey}`,
+          state: 'playing',
+          time: nowMs,
+          duration: 0,
+          hasMDE: 1
+        }
+      }).catch(() => {});
+    }, 1500);
+    keepaliveTimers.set(cacheKey + '-live', liveKeepalive);
   }
 }
 
@@ -92,6 +100,9 @@ function stopKeepalive(cacheKey) {
   // Clear refresh timer too
   const refreshTimer = keepaliveTimers.get(cacheKey + '-refresh');
   if (refreshTimer) { clearInterval(refreshTimer); keepaliveTimers.delete(cacheKey + '-refresh'); }
+  // Clear LiveTV keepalive timer
+  const liveTimer = keepaliveTimers.get(cacheKey + '-live');
+  if (liveTimer) { clearInterval(liveTimer); keepaliveTimers.delete(cacheKey + '-live'); }
 }
 
 function clearRoomManifest(roomId) {
