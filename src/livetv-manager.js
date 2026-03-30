@@ -167,13 +167,13 @@ async function tuneChannel(channelId) {
       throw new Error('Tune response missing ratingKey (after retry)');
     }
     console.log(`[LiveTV] Retuned channel ${channelId} → ratingKey ${meta2.ratingKey} (sub ${sub2.key})`);
-    return { ratingKey: meta2.ratingKey, subKey: sub2.key };
+    return { ratingKey: String(meta2.ratingKey), subKey: sub2.key };
   }
 
   // meta.key is '/livetv/sessions/{uuid}' — needed as the 'key' param in /:/timeline
   // so Plex correctly associates keepalive pings with this live session.
   console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey} (sub ${sub.key})`);
-  return { ratingKey: meta.ratingKey, subKey: sub.key, sessionKey: meta.key };
+  return { ratingKey: String(meta.ratingKey), subKey: sub.key, sessionKey: meta.key };
 }
 
 async function getGuide() {

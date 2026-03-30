@@ -111,10 +111,10 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
       if (!channelId) return;
       try {
         const result = await liveTvManager.tuneChannel(channelId);
-        if (result.ratingKey !== ratingKey) {
+        if (String(result.ratingKey) !== String(ratingKey)) {
           // Plex issued a new session — update maps so stale requests get redirected
           console.log(`[HLS] Soft retune: new session ratingKey=${result.ratingKey} (was ${ratingKey})`);
-          livetvCurrentRatingKeys.set(roomId, result.ratingKey);
+          livetvCurrentRatingKeys.set(roomId, String(result.ratingKey));
           livetvSubKeys.set(roomId, result.subKey);
         } else {
           console.log(`[HLS] Soft retune: same session ratingKey=${ratingKey}, TTL refreshed`);
@@ -403,9 +403,11 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 
   // For LiveTV: check if client is using a stale ratingKey (e.g., after retune).
   // If so, redirect them to the current one to avoid 400 errors from Plex.
+  // Use String() comparison — Plex tune returns ratingKey as a number, but URL
+  // params are always strings; strict equality would cause a false redirect loop.
   if (isLive && !bust) {
     const currentRatingKey = livetvCurrentRatingKeys.get(roomId);
-    if (currentRatingKey && currentRatingKey !== ratingKey) {
+    if (currentRatingKey && String(currentRatingKey) !== String(ratingKey)) {
       console.log(`[HLS] Redirecting stale ratingKey ${ratingKey} → ${currentRatingKey} for room ${roomId}`);
       return res.redirect(`/api/stream/hls/${roomId}/${currentRatingKey}/master.m3u8?live=1`);
     }
@@ -525,9 +527,11 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
 
   // For LiveTV: check if client is using a stale ratingKey (e.g., after retune).
   // If so, redirect them to the current one to avoid 400 errors from Plex.
+  // Use String() comparison — Plex tune returns ratingKey as a number, but URL
+  // params are always strings; strict equality would cause a false redirect loop.
   if (!bust) {
     const currentRatingKey = livetvCurrentRatingKeys.get(roomId);
-    if (currentRatingKey && currentRatingKey !== ratingKey) {
+    if (currentRatingKey && String(currentRatingKey) !== String(ratingKey)) {
       console.log(`[DASH] Redirecting stale ratingKey ${ratingKey} → ${currentRatingKey} for room ${roomId}`);
       return res.redirect(`/api/stream/dash/${roomId}/${currentRatingKey}/manifest.mpd`);
     }
@@ -572,6 +576,7 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
   // Serve cached manifest to latecomers — avoids calling start.mpd again
   // which would restart the Plex session and kick other viewers.
   // Expired entries are treated as missing so a fresh Plex session is started.
+  console.log(`[DASH] Request for ${cacheKey} — cached=${manifestCache.has(cacheKey)} pending=${manifestPending.has(cacheKey)}`);
   const cached = manifestCache.get(cacheKey);
   if (cached) {
     if (Date.now() - cached.cachedAt < MANIFEST_TTL_MS) return res.send(cached.manifest);
@@ -617,7 +622,8 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
     res.send(manifest);
   } catch (err) {
     manifestPending.delete(cacheKey);
-    console.error('[DASH] Start error:', err.response?.status, err.message);
+    console.error('[DASH] Start error:', err.response?.status, err.message,
+      err.response?.data ? String(err.response.data).slice(0, 200) : '');
     res.status(500).send('DASH error');
   }
 });
@@ -632,7 +638,7 @@ async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subK
   // Store LiveTV metadata even if manifest is already cached/pending
   if (isLive && channelId) livetvChannelIds.set(roomId, channelId);
   if (isLive && subKey)    livetvSubKeys.set(roomId, subKey);
-  if (isLive)              livetvCurrentRatingKeys.set(roomId, ratingKey);
+  if (isLive)              livetvCurrentRatingKeys.set(roomId, String(ratingKey));
 
   if (manifestCache.has(cacheKey) || manifestPending.has(cacheKey)) return;
 
