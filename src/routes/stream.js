@@ -299,7 +299,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
     }
   }
 
-  const fetchManifest = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, offsetMs });
+  const fetchManifest = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey: actualRatingKey, proxyPrefix, offsetMs });
 
   const promise = fetchManifest();
   manifestPending.set(cacheKey, promise);
