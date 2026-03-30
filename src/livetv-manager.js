@@ -99,12 +99,36 @@ async function fetchNowPlaying(headers) {
 // same existing subscription (and its already-running expiry clock).
 async function stopSubscription(subKey) {
   const headers = buildHeaders();
+
+  // First, delete the subscription
   await axios.delete(`${PLEX_HOST}/media/subscriptions/${subKey}`, {
     headers,
     params: { 'X-Plex-Client-Identifier': CLIENT_ID },
     timeout: 5000,
-  });
-  console.log(`[LiveTV] Stopped subscription ${subKey}`);
+  }).catch(() => {}); // Ignore errors - subscription might already be gone
+
+  // Also cancel any stale transcode sessions for this client
+  // Plex doesn't immediately kill old sessions when subscription is deleted
+  try {
+    const sessionsRes = await axios.get(`${PLEX_HOST}/transcode/sessions`, { headers, timeout: 5000 });
+    const sessions = sessionsRes.data?.MediaContainer?.TranscodeSession || [];
+    const now = Date.now() / 1000;
+
+    for (const session of sessions) {
+      // Cancel old static sessions (older than 60 seconds) to prevent accumulation
+      if (session.context === 'static' && session.timeStamp) {
+        const age = now - session.timeStamp;
+        if (age > 60) {
+          console.log(`[LiveTV] Cancelling stale transcode session ${session.key} (age: ${age}s)`);
+          await axios.delete(`${PLEX_HOST}/transcode/sessions/${session.key}`, { headers, timeout: 2000 }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore - cleaning up old sessions is best effort
+  }
+
+  console.log(`[LiveTV] Stopped subscription ${subKey} and cleaned stale sessions`);
 }
 
 // Tune a live TV channel via Plex DVR — returns { ratingKey, subKey }
