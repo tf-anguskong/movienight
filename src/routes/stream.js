@@ -109,8 +109,6 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
         console.log(`[HLS] No channelId for proactive refresh, skipping`);
         return;
       }
-        return;
-      }
 
       const liveTvManager = require('../livetv-manager');
 
