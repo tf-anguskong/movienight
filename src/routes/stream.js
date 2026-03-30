@@ -593,9 +593,9 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
     }
   }
 
-  // Get the live session key (livetv/sessions/{uuid}) for the path parameter
-  // This is what makes DASH work for LiveTV - it links the transcode to the DVR subscription
-  const liveSessionKey = liveTvSessionKeys.get(`${roomId}-${actualRatingKey}`) || `/livetv/sessions/${actualRatingKey}`;
+  // Get the live session key (livetv/sessions/{uuid}) for the path parameter.
+  // Registered by registerLiveTvSessionKey in sync.js after tune, before this route is hit.
+  const liveSessionKey = liveTvSessionKeys.get(`${roomId}-${actualRatingKey}`) || null;
 
   // Recompute sessionId from actualRatingKey — after a bust+retune, actualRatingKey
   // may differ from the URL param ratingKey, and using a stale sessionId causes Plex
@@ -626,35 +626,15 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
 // Called by doRetune in sync.js so the manifest is already cached by the time
 // clients receive livetv-reload — reducing black-screen time on retune from ~7s to ~2s.
 async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subKey = null) {
-  const cacheKey    = `${roomId}-${ratingKey}`;
+  // Live TV uses the DASH cache key to match what the /dash/ route serves.
+  const cacheKey = isLive ? `${roomId}-dash-${ratingKey}` : `${roomId}-${ratingKey}`;
 
-  // Early return if already cached/pending - but still store channel/sub info first
-  if (manifestCache.has(cacheKey) || manifestPending.has(cacheKey)) {
-    // Still store LiveTV metadata even if manifest is cached
-    if (isLive && channelId) {
-      livetvChannelIds.set(roomId, channelId);
-    }
-    if (isLive && subKey) {
-      livetvSubKeys.set(roomId, subKey);
-    }
-    if (isLive) {
-      livetvCurrentRatingKeys.set(roomId, ratingKey);
-    }
-    return;
-  }
+  // Store LiveTV metadata even if manifest is already cached/pending
+  if (isLive && channelId) livetvChannelIds.set(roomId, channelId);
+  if (isLive && subKey)    livetvSubKeys.set(roomId, subKey);
+  if (isLive)              livetvCurrentRatingKeys.set(roomId, ratingKey);
 
-  // Store channelId for LiveTV so we can retune on bust=1
-  if (isLive && channelId) {
-    livetvChannelIds.set(roomId, channelId);
-  }
-  // Store subKey for LiveTV so we can stop the subscription on retune
-  if (isLive && subKey) {
-    livetvSubKeys.set(roomId, subKey);
-  }
-  // Track the current ratingKey for LiveTV rooms
-  if (isLive) {
-    livetvCurrentRatingKeys.set(roomId, ratingKey);
-  }
+  if (manifestCache.has(cacheKey) || manifestPending.has(cacheKey)) return;
 
   const plexBaseUrl       = isLive ? LIVETV_PLEX_URL   : PLEX_URL;
   const plexToken         = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
@@ -662,7 +642,18 @@ async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subK
   const sessionId         = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey.slice(0, 24)}`;
   const playbackSessionId = isLive ? crypto.randomUUID() : null;
   const bgSessionId       = isLive ? crypto.randomUUID() : null;
-  const promise     = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, playbackSessionId, bgSessionId });
+
+  let promise;
+  if (isLive) {
+    // Use DASH for live TV so path=/livetv/sessions/{uuid} links the transcode
+    // to the DVR subscription — the HLS endpoint rejects this path.
+    // The sessionKey was registered by registerLiveTvSessionKey before this call.
+    const liveSessionKey = liveTvSessionKeys.get(`${roomId}-${ratingKey}`) || null;
+    promise = callPlexStartMpd({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, liveSessionKey, playbackSessionId, bgSessionId });
+  } else {
+    promise = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, playbackSessionId, bgSessionId });
+  }
+
   manifestPending.set(cacheKey, promise);
   try {
     const manifest = await promise;

@@ -379,37 +379,44 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
 // ── Live TV player (HLS via Plex transcode proxy) ────────────
 let dashPlayer = null;
 
-function loadLiveTvDash(ratingKey) {
+function loadLiveTvDash(ratingKey, bust = false) {
   if (dashPlayer) { dashPlayer.destroy(); dashPlayer = null; }
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
 
-  // Use DASH endpoint instead of HLS for LiveTV
-  // DASH is the only transcode path where Plex accepts path=/livetv/sessions/{uuid}
-  // which properly links the transcode to the DVR subscription and prevents timeout
-  const src = `/api/stream/dash/${roomId}/${ratingKey}/manifest.mpd`;
+  // Use DASH endpoint — only protocol where Plex accepts path=/livetv/sessions/{uuid}
+  const src = `/api/stream/dash/${roomId}/${ratingKey}/manifest.mpd${bust ? '?bust=1' : ''}`;
 
-  if (typeof dashjs !== 'undefined' || typeof Dash !== 'undefined') {
-    const DashPlayer = typeof dashjs !== 'undefined' ? dashjs.MediaPlayer : Dash.MediaPlayer;
-    dashPlayer = DashPlayer.create();
-    dashPlayer.initialize(video, src, true);
-    dashPlayer.on('manifestLoaded', () => {
-      console.log('[LiveTV DASH] Manifest loaded');
-      releaseSyncLock();
-    });
-    dashPlayer.on('error', (e) => {
-      console.error('[LiveTV DASH] Error:', e);
-    });
-    // Try to play after a short delay to let the player initialize
-    setTimeout(() => {
-      tryPlay();
-    }, 500);
-  } else {
-    console.error('[LiveTV] dash.js not loaded, falling back to native playback');
+  if (typeof dashjs === 'undefined') {
+    console.error('[LiveTV] dash.js not loaded');
     video.src = src;
     tryPlay();
+    return;
   }
+
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+
+  dashPlayer = dashjs.MediaPlayer().create();
+  dashPlayer.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
+  dashPlayer.initialize(video, src, true);
+
+  dashPlayer.on(dashjs.MediaPlayer.events.MANIFEST_LOADED, () => {
+    console.log('[LiveTV DASH] Manifest loaded');
+    releaseSyncLock();
+    tryPlay();
+  });
+
+  dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+    console.error('[LiveTV DASH] Error:', e.error);
+    if (retryCount >= MAX_RETRIES) return;
+    retryCount++;
+    console.log(`[LiveTV DASH] Stream error — retuning (attempt ${retryCount})`);
+    setTimeout(() => {
+      loadLiveTvDash(ratingKey, true); // bust=1 triggers server-side retune
+    }, 1500 * retryCount);
+  });
 }
 
 // Legacy HLS loader kept for backwards compatibility but not used for LiveTV
