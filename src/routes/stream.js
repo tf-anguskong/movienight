@@ -1,12 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const liveTvManager = require('../livetv-manager');
 
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
 const LIVETV_PLEX_URL   = process.env.LIVETV_PLEX_HOST  || PLEX_URL;
 const LIVETV_PLEX_TOKEN = process.env.LIVETV_PLEX_TOKEN || PLEX_TOKEN;
 const CLIENT_ID = process.env.PLEX_CLIENT_ID || 'movienight-app';
+
+// Map to track LiveTV channelId per room (needed for retune on bust)
+const livetvChannelIds = new Map(); // roomId → channelId
 
 // Cache the master manifest per room+movie so only the first viewer
 // calls start.m3u8. Latecomers get the cached manifest and share
@@ -236,7 +240,32 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   const plexToken   = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
   const proxyPrefix = isLive ? '/api/stream/proxy-live' : '/api/stream/proxy';
 
-  if (bust) {
+  // For LiveTV with bust=1, we need to retune to get a fresh Plex session
+  // because the old session has expired (~3-4 min for LiveTV)
+  let actualRatingKey = ratingKey;
+  if (bust && isLive) {
+    const channelId = livetvChannelIds.get(roomId);
+    if (channelId) {
+      console.log(`[HLS] LiveTV bust - retuning to channel ${channelId}`);
+      // Delete old subscription first to force a fresh session
+      const oldSubKey = activeSessions.get(cacheKey)?.subKey;
+      if (oldSubKey) {
+        await liveTvManager.stopSubscription(oldSubKey).catch(() => {});
+      }
+      // Tune to get fresh ratingKey
+      const tuneResult = await liveTvManager.tuneChannel(channelId);
+      actualRatingKey = tuneResult.ratingKey;
+      // Update cache key with new ratingKey
+      const newCacheKey = `${roomId}-${actualRatingKey}`;
+      // Clear old keys
+      stopKeepalive(cacheKey);
+      manifestCache.delete(cacheKey);
+      activeSessions.delete(cacheKey);
+      // Update for new session
+      cacheKey = newCacheKey;
+      console.log(`[HLS] LiveTV retuned to ratingKey=${actualRatingKey}`);
+    }
+  } else if (bust) {
     stopKeepalive(cacheKey);
     manifestCache.delete(cacheKey);
     activeSessions.delete(cacheKey);
@@ -292,7 +321,11 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 // Pre-start a Plex transcode session and cache its manifest server-side.
 // Called by doRetune in sync.js so the manifest is already cached by the time
 // clients receive livetv-reload — reducing black-screen time on retune from ~7s to ~2s.
-async function prewarmManifest(roomId, ratingKey, isLive) {
+async function prewarmManifest(roomId, ratingKey, isLive, channelId = null) {
+  // Store channelId for LiveTV so we can retune on bust=1
+  if (isLive && channelId) {
+    livetvChannelIds.set(roomId, channelId);
+  }
   const cacheKey    = `${roomId}-${ratingKey}`;
   if (manifestCache.has(cacheKey) || manifestPending.has(cacheKey)) return;
   const plexBaseUrl = isLive ? LIVETV_PLEX_URL   : PLEX_URL;
