@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const { clearRoomManifest, prewarmManifest } = require('./routes/stream');
+const { clearRoomManifest, prewarmManifest, registerLiveTvSessionKey } = require('./routes/stream');
 const plex = require('./plex');
 const { sanitizeText } = require('./sanitize');
 
@@ -180,8 +180,9 @@ async function doRetune(room, io) {
       await liveTvManager.stopSubscription(room.liveTvSubKey).catch(() => {});
     }
     clearRoomManifest(room.id);
-    const { ratingKey, subKey } = await liveTvManager.tuneChannel(room.liveTvChannelId);
+    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId);
     room.liveTvSubKey = subKey;
+    if (sessionKey) registerLiveTvSessionKey(room.id, ratingKey, sessionKey);
 
     // Pre-warm: start the new Plex transcode session and cache its manifest
     // before telling clients to switch. Clients get an instant cache hit when
@@ -436,11 +437,12 @@ function setupSync(io, enabledRoomTypes) {
       clearRoomManifest(room.id); // stop any existing Plex transcode session
       try {
         const liveTvManager = require('./livetv-manager');
-        const { ratingKey, subKey } = await liveTvManager.tuneChannel(channelId);
+        const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(channelId);
         room.liveTvChannel      = String(channel || '').slice(0, 20);
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
         room.liveTvChannelId    = channelId;
         room.liveTvSubKey       = subKey;
+        if (sessionKey) registerLiveTvSessionKey(room.id, ratingKey, sessionKey);
         room.movieKey   = ratingKey;
         room.playing    = true;
         room.position   = 0;

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const crypto = require('crypto');
 
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
@@ -18,6 +19,7 @@ const manifestCache    = new Map(); // cacheKey → { manifest: string, cachedAt
 const manifestPending  = new Map(); // cacheKey → Promise<string>
 const activeSessions   = new Map(); // cacheKey → { sessionId, ratingKey, isLive }
 const keepaliveTimers  = new Map(); // cacheKey → intervalId
+const liveTvSessionKeys = new Map(); // cacheKey → '/livetv/sessions/{uuid}' from tune response
 const MANIFEST_TTL_MS  = 4 * 60 * 60 * 1000; // 4 hours — evict stale manifests
 const KEEPALIVE_MS     = 8000; // ping Plex every 8s to prevent session cleanup
 
@@ -33,34 +35,55 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000); // run every 30 minutes
 
-// Send periodic timeline pings so Plex doesn't clean up the transcode session.
-// Without these, Plex kills the session after ~60s of perceived inactivity,
-// causing 404s on segment requests and forcing a full session restart.
+// Send periodic keepalive pings matching what the native Plex web client does.
+// HAR analysis showed native Plex uses:
+//   1. /:/timeline  with key=/livetv/sessions/{uuid} (NOT /library/metadata/) for live TV
+//   2. /status/sessions/background  polled with X-Plex-Playback-Session-Id — the real
+//      heartbeat that prevents DVR session cleanup at ~4 minutes
+// The /video/:/transcode/universal/ping endpoint requires the internal transcode UUID
+// (not our session identifier) and is NOT used by the native client.
 function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken) {
   stopKeepalive(cacheKey);
-  const startedAt = Date.now();
+  const startedAt        = Date.now();
+  // Per-session UUIDs sent with background polls — Plex uses these to track
+  // that a specific viewer is actively watching and keeps the session alive.
+  const playbackSessionId = crypto.randomUUID();
+  const bgSessionId       = crypto.randomUUID();
+  // For live TV, the 'key' in /:/timeline must be the /livetv/sessions/{uuid} path
+  // returned by the tune response — NOT /library/metadata/{ratingKey}.
+  // Using the wrong key causes Plex to ignore the ping for the live session.
+  const liveSessionKey = isLive ? liveTvSessionKeys.get(cacheKey) : null;
+
   const timer = setInterval(() => {
     const elapsedMs = Date.now() - startedAt;
-    // Timeline ping — send advancing time so Plex knows the client is actively
-    // consuming the stream. Sending time:0 forever causes Plex to treat the
-    // session as inactive and terminate it after ~3 minutes (observed for live TV).
+    const key = liveSessionKey || `/library/metadata/${ratingKey}`;
+
     axios.get(`${plexBaseUrl}/:/timeline`, {
       params: {
         'X-Plex-Token': plexToken,
         'X-Plex-Client-Identifier': CLIENT_ID,
         'X-Plex-Session-Identifier': sessionId,
+        'X-Plex-Session-Id': bgSessionId,
+        'X-Plex-Playback-Session-Id': playbackSessionId,
         ratingKey,
-        key: `/library/metadata/${ratingKey}`,
+        key,
         state: 'playing',
         time: elapsedMs,
         duration: isLive ? 0 : undefined,
         hasMDE: 1
       }
     }).catch(() => {});
-    // For live TV, also hit the transcode ping endpoint as belt-and-suspenders
+
     if (isLive) {
-      axios.get(`${plexBaseUrl}/video/:/transcode/universal/ping`, {
-        params: { 'X-Plex-Token': plexToken, session: sessionId }
+      // Native Plex polls this every ~2.6s; we poll every 8s which is sufficient.
+      // The X-Plex-Playback-Session-Id is what Plex uses to recognise an active viewer.
+      axios.get(`${plexBaseUrl}/status/sessions/background`, {
+        params: {
+          'X-Plex-Token': plexToken,
+          'X-Plex-Client-Identifier': CLIENT_ID,
+          'X-Plex-Session-Id': bgSessionId,
+          'X-Plex-Playback-Session-Id': playbackSessionId,
+        }
       }).catch(() => {});
     }
   }, KEEPALIVE_MS);
@@ -70,6 +93,12 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
 function stopKeepalive(cacheKey) {
   const timer = keepaliveTimers.get(cacheKey);
   if (timer) { clearInterval(timer); keepaliveTimers.delete(cacheKey); }
+}
+
+// Called by sync.js after a successful tune so keepalive knows the
+// /livetv/sessions/{uuid} key to use in /:/timeline for live TV.
+function registerLiveTvSessionKey(roomId, ratingKey, sessionKey) {
+  liveTvSessionKeys.set(`${roomId}-${ratingKey}`, sessionKey);
 }
 
 function clearRoomManifest(roomId) {
@@ -377,4 +406,4 @@ router.get('/thumb/:ratingKey', async (req, res) => {
   }
 });
 
-module.exports = { router, clearRoomManifest, prewarmManifest };
+module.exports = { router, clearRoomManifest, prewarmManifest, registerLiveTvSessionKey };
