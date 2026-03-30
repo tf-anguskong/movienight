@@ -188,7 +188,7 @@ async function doRetune(room, io) {
     // before telling clients to switch. Clients get an instant cache hit when
     // they request the new manifest, and Plex has had ~1.5s to buffer the first
     // segments — cutting black-screen time from ~7s to ~2s.
-    await prewarmManifest(room.id, ratingKey, true).catch(() => {});
+    await prewarmManifest(room.id, ratingKey, true, room.liveTvChannelId, subKey).catch(() => {});
     await new Promise(r => setTimeout(r, 1500));
 
     const keyChanged = ratingKey !== room.movieKey;
@@ -434,6 +434,18 @@ function setupSync(io, enabledRoomTypes) {
       const room = socketToRoom.get(socket.id);
       if (!room || socket.id !== room.hostSocketId || room.roomType !== 'livetv') return;
       if (!channelId) return;
+
+      // Validate channelId is not empty (Plex may return numeric or string IDs)
+      if (!channelId || typeof String(channelId).trim() !== 'string' || !String(channelId).trim()) {
+        return socket.emit('error-message', 'Invalid channelId');
+      }
+
+      // Prevent concurrent tune requests (rate limit on channel switching)
+      if (room._tuningInProgress) {
+        return socket.emit('error-message', 'Channel change in progress');
+      }
+      room._tuningInProgress = true;
+
       clearRoomManifest(room.id); // stop any existing Plex transcode session
       try {
         const liveTvManager = require('./livetv-manager');
@@ -447,11 +459,17 @@ function setupSync(io, enabledRoomTypes) {
         room.playing    = true;
         room.position   = 0;
         room.lastUpdate = Date.now();
+
+        // Pre-warm the manifest so clients get instant playback
+        await prewarmManifest(room.id, ratingKey, true, channelId, subKey).catch(() => {});
+
         room.broadcastState(io);
         console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);
       } catch (err) {
         console.error(`[Room] Failed to tune channel ${channel}:`, err.message);
         socket.emit('error-message', `Failed to tune channel: ${err.message}`);
+      } finally {
+        room._tuningInProgress = false;
       }
     });
 
@@ -470,6 +488,10 @@ function setupSync(io, enabledRoomTypes) {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
       if (!playPauseLimiter.allow(socket.id)) return;
+      // LiveTV intentionally bypasses playback lock — the stream is shared across
+      // all viewers and cannot be independently paused/resumed by guests. Only the
+      // host can retune to a different channel, but playback state (play/pause)
+      // must stay in sync for everyone watching the same stream.
       if (room.settings.playbackLocked && socket.id !== room.hostSocketId && room.roomType !== 'livetv') return;
       room.position = position ?? room.currentPosition();
       room.playing = true; room.lastUpdate = Date.now();
@@ -486,6 +508,7 @@ function setupSync(io, enabledRoomTypes) {
       const room = socketToRoom.get(socket.id);
       if (!room) return;
       if (!playPauseLimiter.allow(socket.id)) return;
+      // LiveTV intentionally bypasses playback lock — see play handler for explanation.
       if (room.settings.playbackLocked && socket.id !== room.hostSocketId && room.roomType !== 'livetv') return;
       room.position = position ?? room.currentPosition();
       room.playing = false; room.lastUpdate = Date.now();

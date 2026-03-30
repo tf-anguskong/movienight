@@ -97,6 +97,13 @@ socket.on('room-state', (state) => {
   isHost = state.isHost;
   roomType = state.roomType || 'movie';
   roomNameEl.textContent = state.name || '';
+
+  // For LiveTV, reset currentKey to ensure fresh stream load from Playdarr proxy
+  // This prevents stale connections from previous rooms/sessions
+  if (roomType === 'livetv') {
+    currentKey = null;
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+  }
   setHostUI(isHost, state.inviteToken);
   if (state.settings) applyRoomSettings(state.settings);
   applyState(state);
@@ -385,15 +392,18 @@ function loadLiveTvHls(ratingKey) {
       tryPlay();
       releaseSyncLock();
     });
-    let networkRetried = false;
+    let liveTvRetryCount = 0;
+    const LIVE_TV_MAX_RETRIES = 4;
     hlsInstance.on(Hls.Events.ERROR, (_, d) => {
       if (!d.fatal) return;
       if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
         console.warn('[LiveTV] Media error, recovering:', d.details);
         hlsInstance.recoverMediaError();
-      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
-        networkRetried = true;
-        console.warn('[LiveTV] Network error, busting manifest:', d.details);
+      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && liveTvRetryCount < LIVE_TV_MAX_RETRIES) {
+        liveTvRetryCount++;
+        // For LiveTV, retry immediately (no delay) - exponential backoff is too slow
+        const delay = 0;
+        console.warn(`[LiveTV] Network error, retry ${liveTvRetryCount}/${LIVE_TV_MAX_RETRIES} immediately:`, d.details);
         const bustSrc = `${src}&bust=1`;
         setTimeout(() => {
           if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
@@ -403,7 +413,7 @@ function loadLiveTvHls(ratingKey) {
           hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
           hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
             if (!d2.fatal) return;
-            // Bust + retry also failed — the DVR ratingKey is dead.
+            // Retries exhausted — the DVR ratingKey is dead.
             // Host requests a retune; guests wait for the rebroadcast.
             if (isHost) {
               noMovieText.textContent = 'Reconnecting to channel…';
@@ -418,7 +428,7 @@ function loadLiveTvHls(ratingKey) {
               currentKey = null;
             }
           });
-        }, 2000);
+        }, delay);
       } else {
         console.error('[LiveTV] Fatal:', d.type, d.details);
         if (isHost) {
