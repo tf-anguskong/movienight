@@ -77,9 +77,41 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
   // Use distinct keys to avoid overwriting - one for main timer, one for live timer
   keepaliveTimers.set(cacheKey + '-main', timer);
 
-  // For LiveTV, use a separate more aggressive keepalive timer (every 1.5s)
-  // to ensure Plex doesn't kill the session due to inactivity
+  // For LiveTV, proactively refresh the session at 3 minutes to prevent
+  // Plex from killing it (~4 min timeout). This creates a new session BEFORE
+  // the old one dies, making the transition seamless to clients.
   if (isLive) {
+    const PROACTIVE_REFRESH_MS = 3 * 60 * 1000; // 3 minutes
+    const proactiveTimer = setTimeout(async () => {
+      console.log(`[HLS] Proactive session refresh for ${cacheKey} (3 min mark)`);
+      // Get the subKey for this room to stop old subscription
+      const roomId = cacheKey.split('-')[0];
+      const subKey = livetvSubKeys.get(roomId);
+      const oldSubKey = subKey;
+
+      // Stop old subscription and clean stale sessions
+      if (oldSubKey) {
+        const liveTvManager = require('../livetv-manager');
+        await liveTvManager.stopSubscription(oldSubKey).catch(() => {});
+      }
+
+      // Clear caches so next request creates fresh session
+      stopKeepalive(cacheKey);
+      manifestCache.delete(cacheKey);
+      activeSessions.delete(cacheKey);
+
+      // Clear the subKey so next tune gets a fresh one
+      if (roomId) {
+        livetvSubKeys.delete(roomId);
+        livetvCurrentRatingKeys.delete(roomId);
+      }
+
+      console.log(`[HLS] Proactive refresh complete for ${cacheKey}`);
+    }, PROACTIVE_REFRESH_MS);
+    keepaliveTimers.set(cacheKey + '-proactive', proactiveTimer);
+
+    // Also use a separate more aggressive keepalive timer (every 1.5s)
+    // to ensure Plex doesn't kill the session due to inactivity
     const liveKeepalive = setInterval(() => {
       // Additional transcode ping endpoint for LiveTV
       axios.get(`${plexBaseUrl}/video/:/transcode/universal/ping`, {
@@ -112,6 +144,9 @@ function stopKeepalive(cacheKey) {
   // Clear LiveTV keepalive timer (both old '-live' key and legacy keys for backward compat)
   const liveTimer = keepaliveTimers.get(cacheKey + '-live');
   if (liveTimer) { clearInterval(liveTimer); keepaliveTimers.delete(cacheKey + '-live'); }
+  // Clear proactive refresh timer (uses setTimeout, not setInterval)
+  const proactiveTimer = keepaliveTimers.get(cacheKey + '-proactive');
+  if (proactiveTimer) { clearTimeout(proactiveTimer); keepaliveTimers.delete(cacheKey + '-proactive'); }
   // Clear any remaining timer at the base key (legacy, shouldn't happen but safe to clear)
   const legacyTimer = keepaliveTimers.get(cacheKey);
   if (legacyTimer) { clearInterval(legacyTimer); keepaliveTimers.delete(cacheKey); }
