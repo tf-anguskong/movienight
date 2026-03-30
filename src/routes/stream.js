@@ -65,11 +65,33 @@ function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, ple
     }
   }, KEEPALIVE_MS);
   keepaliveTimers.set(cacheKey, timer);
+
+  // For LiveTV, proactively refresh the session every 2 minutes
+  // to prevent Plex from killing it after ~3 minutes of inactivity
+  if (isLive) {
+    const refreshTimer = setInterval(() => {
+      console.log(`[HLS] Proactive session refresh for LiveTV ${cacheKey}`);
+      stopKeepalive(cacheKey);
+      manifestCache.delete(cacheKey);
+      activeSessions.delete(cacheKey);
+      // Also notify clients to reload
+      if (_io) {
+        // Emit to specific room if we can derive it from cacheKey
+        _io.emit('livetv-refresh-required', { cacheKey });
+      }
+    }, 2 * 60 * 1000); // 2 minutes
+    
+    // Store refresh timer so we can clear it
+    keepaliveTimers.set(cacheKey + '-refresh', refreshTimer);
+  }
 }
 
 function stopKeepalive(cacheKey) {
   const timer = keepaliveTimers.get(cacheKey);
   if (timer) { clearInterval(timer); keepaliveTimers.delete(cacheKey); }
+  // Clear refresh timer too
+  const refreshTimer = keepaliveTimers.get(cacheKey + '-refresh');
+  if (refreshTimer) { clearInterval(refreshTimer); keepaliveTimers.delete(cacheKey + '-refresh'); }
 }
 
 function clearRoomManifest(roomId) {
