@@ -188,7 +188,7 @@ async function doRetune(room, io) {
     // before telling clients to switch. Clients get an instant cache hit when
     // they request the new manifest, and Plex has had ~1.5s to buffer the first
     // segments — cutting black-screen time from ~7s to ~2s.
-    await prewarmManifest(room.id, ratingKey, true, room.liveTvChannelId, subKey).catch(() => {});
+    await prewarmManifest(room.id, ratingKey, true, room.liveTvChannelId, subKey, sessionKey).catch(() => {});
     await new Promise(r => setTimeout(r, 1500));
 
     const keyChanged = ratingKey !== room.movieKey;
@@ -461,7 +461,7 @@ function setupSync(io, enabledRoomTypes) {
         room.lastUpdate = Date.now();
 
         // Pre-warm the manifest so clients get instant playback
-        await prewarmManifest(room.id, ratingKey, true, channelId, subKey).catch(() => {});
+        await prewarmManifest(room.id, ratingKey, true, channelId, subKey, sessionKey).catch(() => {});
 
         room.broadcastState(io);
         console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);

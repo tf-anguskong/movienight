@@ -176,7 +176,12 @@ function rewriteM3u8(content, baseDir, proxyPrefix = '/api/stream/proxy') {
 
 // ── Shared Plex transcode helper ───────────────────────────
 // Extracted so the route handler and prewarmManifest share the same logic.
-async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, offsetMs = 0 }) {
+async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, offsetMs = 0, liveSessionPath = null }) {
+  // For live TV, native Plex passes path=/livetv/sessions/{uuid} (from the tune response).
+  // Using /library/metadata/{ratingKey} instead causes Plex to not link the transcode
+  // session to the DVR subscription, so the DVR subscription expires at ~4 min regardless
+  // of keepalive calls.
+  const path = liveSessionPath || `/library/metadata/${ratingKey}`;
   const params = {
     'X-Plex-Token': plexToken,
     'X-Plex-Client-Identifier': CLIENT_ID,
@@ -188,7 +193,7 @@ async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey,
     'X-Plex-Device-Name': 'Movie Night',
     'X-Plex-Version': '1.0.0',
     hasMDE: '1',
-    path: `/library/metadata/${ratingKey}`,
+    path,
     videoResolution: '1920x1080',
     maxVideoBitrate: '8000',
     videoCodec: 'h264',
@@ -198,6 +203,7 @@ async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey,
     mediaIndex: '0',
     partIndex: '0',
     fastSeek: '1',
+    ...(liveSessionPath ? { 'X-Plex-Incomplete-Segments': '1' } : {}),
     ...(offsetMs > 0 ? { offset: offsetMs } : {})
   };
   // Build query string manually — axios encodes '/' as '%2F' in param values,
@@ -279,6 +285,8 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       activeSessions.delete(cacheKey);
       // Update for new session
       cacheKey = newCacheKey;
+      // Register the live session path so the transcode is linked to the DVR subscription
+      if (tuneResult.sessionKey) registerLiveTvSessionKey(roomId, actualRatingKey, tuneResult.sessionKey);
       console.log(`[HLS] LiveTV retuned to ratingKey=${actualRatingKey}, sub=${tuneResult.subKey}`);
     }
   } else if (bust) {
@@ -315,7 +323,8 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
     }
   }
 
-  const fetchManifest = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey: actualRatingKey, proxyPrefix, offsetMs });
+  const liveSessionPath = isLive ? liveTvSessionKeys.get(cacheKey) : null;
+  const fetchManifest = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey: actualRatingKey, proxyPrefix, offsetMs, liveSessionPath });
 
   const promise = fetchManifest();
   manifestPending.set(cacheKey, promise);
@@ -337,7 +346,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
 // Pre-start a Plex transcode session and cache its manifest server-side.
 // Called by doRetune in sync.js so the manifest is already cached by the time
 // clients receive livetv-reload — reducing black-screen time on retune from ~7s to ~2s.
-async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subKey = null) {
+async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subKey = null, liveSessionPath = null) {
   const cacheKey    = `${roomId}-${ratingKey}`;
 
   // Early return if already cached/pending - but still store channel/sub info first
@@ -372,7 +381,7 @@ async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subK
   const plexToken   = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
   const proxyPrefix = isLive ? '/api/stream/proxy-live' : '/api/stream/proxy';
   const sessionId   = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey.slice(0, 24)}`;
-  const promise     = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix });
+  const promise     = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, liveSessionPath });
   manifestPending.set(cacheKey, promise);
   try {
     const manifest = await promise;
