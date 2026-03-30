@@ -54,11 +54,13 @@ setInterval(() => {
 // (not our session identifier) and is NOT used by the native client.
 function startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken) {
   stopKeepalive(cacheKey);
-  const startedAt        = Date.now();
-  // Per-session UUIDs sent with background polls — Plex uses these to track
-  // that a specific viewer is actively watching and keeps the session alive.
-  const playbackSessionId = crypto.randomUUID();
-  const bgSessionId       = crypto.randomUUID();
+  const startedAt = Date.now();
+  // Reuse the same UUIDs that were sent in the start.m3u8 request so Plex can
+  // associate these keepalive calls with the active transcoding session.
+  // Generating new UUIDs here produces orphaned IDs Plex doesn't recognize.
+  const session           = activeSessions.get(cacheKey);
+  const playbackSessionId = session?.playbackSessionId || crypto.randomUUID();
+  const bgSessionId       = session?.bgSessionId       || crypto.randomUUID();
   // For live TV, the 'key' in /:/timeline must be the /livetv/sessions/{uuid} path
   // returned by the tune response — NOT /library/metadata/{ratingKey}.
   // Using the wrong key causes Plex to ignore the ping for the live session.
@@ -176,7 +178,7 @@ function rewriteM3u8(content, baseDir, proxyPrefix = '/api/stream/proxy') {
 
 // ── Shared Plex transcode helper ───────────────────────────
 // Extracted so the route handler and prewarmManifest share the same logic.
-async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, offsetMs = 0 }) {
+async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, offsetMs = 0, playbackSessionId = null, bgSessionId = null }) {
   const params = {
     'X-Plex-Token': plexToken,
     'X-Plex-Client-Identifier': CLIENT_ID,
@@ -198,6 +200,11 @@ async function callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey,
     mediaIndex: '0',
     partIndex: '0',
     fastSeek: '1',
+    // Include session UUIDs in the start request so Plex can associate subsequent
+    // keepalive calls (background polls, timeline) with this specific playback session.
+    // Native Plex sends matching UUIDs in both start.mpd and all keepalive requests.
+    ...(playbackSessionId ? { 'X-Plex-Playback-Session-Id': playbackSessionId } : {}),
+    ...(bgSessionId       ? { 'X-Plex-Session-Id': bgSessionId }               : {}),
     ...(offsetMs > 0 ? { offset: offsetMs } : {})
   };
   // Build query string manually — axios encodes '/' as '%2F' in param values,
@@ -319,8 +326,10 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   // Recompute sessionId from actualRatingKey — after a bust+retune, actualRatingKey
   // may differ from the URL param ratingKey, and using a stale sessionId causes Plex
   // to reject the new transcode start with 400.
-  const sessionId     = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${actualRatingKey.slice(0, 24)}`;
-  const fetchManifest = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey: actualRatingKey, proxyPrefix, offsetMs });
+  const sessionId         = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${actualRatingKey.slice(0, 24)}`;
+  const playbackSessionId = isLive ? crypto.randomUUID() : null;
+  const bgSessionId       = isLive ? crypto.randomUUID() : null;
+  const fetchManifest     = () => callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey: actualRatingKey, proxyPrefix, offsetMs, playbackSessionId, bgSessionId });
 
   const promise = fetchManifest();
   manifestPending.set(cacheKey, promise);
@@ -328,7 +337,7 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   try {
     const manifest = await promise;
     manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
-    activeSessions.set(cacheKey, { sessionId, ratingKey: actualRatingKey, isLive, plexBaseUrl, plexToken });
+    activeSessions.set(cacheKey, { sessionId, ratingKey: actualRatingKey, isLive, plexBaseUrl, plexToken, playbackSessionId, bgSessionId });
     startKeepalive(cacheKey, sessionId, actualRatingKey, isLive, plexBaseUrl, plexToken);
     manifestPending.delete(cacheKey);
     res.send(manifest);
@@ -373,16 +382,18 @@ async function prewarmManifest(roomId, ratingKey, isLive, channelId = null, subK
     livetvCurrentRatingKeys.set(roomId, ratingKey);
   }
 
-  const plexBaseUrl = isLive ? LIVETV_PLEX_URL   : PLEX_URL;
-  const plexToken   = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
-  const proxyPrefix = isLive ? '/api/stream/proxy-live' : '/api/stream/proxy';
-  const sessionId   = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey.slice(0, 24)}`;
-  const promise     = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix });
+  const plexBaseUrl       = isLive ? LIVETV_PLEX_URL   : PLEX_URL;
+  const plexToken         = isLive ? LIVETV_PLEX_TOKEN  : PLEX_TOKEN;
+  const proxyPrefix       = isLive ? '/api/stream/proxy-live' : '/api/stream/proxy';
+  const sessionId         = `mn-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}-${ratingKey.slice(0, 24)}`;
+  const playbackSessionId = isLive ? crypto.randomUUID() : null;
+  const bgSessionId       = isLive ? crypto.randomUUID() : null;
+  const promise     = callPlexStartM3u8({ plexBaseUrl, plexToken, sessionId, ratingKey, proxyPrefix, playbackSessionId, bgSessionId });
   manifestPending.set(cacheKey, promise);
   try {
     const manifest = await promise;
     manifestCache.set(cacheKey, { manifest, cachedAt: Date.now() });
-    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive, plexBaseUrl, plexToken });
+    activeSessions.set(cacheKey, { sessionId, ratingKey, isLive, plexBaseUrl, plexToken, playbackSessionId, bgSessionId });
     startKeepalive(cacheKey, sessionId, ratingKey, isLive, plexBaseUrl, plexToken);
     manifestPending.delete(cacheKey);
   } catch (err) {
