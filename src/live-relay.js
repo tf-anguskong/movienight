@@ -37,8 +37,11 @@ class LiveRelay {
     this.liveSessionKey = liveSessionKey || null; // /livetv/sessions/{uuid}
     this.onStall      = onStall || null;          // called after STALL_THRESH consecutive errors
 
-    // Unique IDs for this relay's Plex session
-    this.sessionId  = `mn-relay-${roomId.replace(/[^a-z0-9]/gi, '').slice(0, 8)}-${this.ratingKey.slice(0, 8)}`;
+    // Unique IDs for this relay's Plex session.
+    // sessionId must be unique per relay instance — reusing the same ID across a
+    // warm-swap causes Plex to treat the new relay as a duplicate client and
+    // kill the shared transcode session, breaking both old and new relays.
+    this.sessionId  = `mn-relay-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
     this.playbackId = crypto.randomUUID();
     this.bgId       = crypto.randomUUID();
 
