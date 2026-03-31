@@ -27,7 +27,8 @@ const KEEPALIVE_MS = 3000;   // DVR subscription keepalive interval (~2.6s in na
 const SEG_TIMEOUT  = 15000;  // max ms to wait for a segment download
 const MAX_SEGS     = 10;     // segments kept in memory (circular buffer)
 const READY_SEGS   = 3;      // segments needed before relay is considered ready
-const STALL_THRESH = 5;      // consecutive poll errors before triggering onStall
+const STALL_THRESH        = 2;       // consecutive poll errors before triggering onStall (fallback)
+const PROACTIVE_RETUNE_MS = 200_000; // 3:20 — proactive retune before 4-min DVR session expiry
 
 class LiveRelay {
   constructor(roomId, { ratingKey, liveSessionKey, onStall }) {
@@ -47,11 +48,12 @@ class LiveRelay {
     this.sequence   = 0;           // EXT-X-MEDIA-SEQUENCE for current window start
     this.seen       = new Set();   // all segment names ever fetched (dedup)
     this.targetDur  = 3;           // EXT-X-TARGETDURATION (updated from playlist)
-    this.running    = false;
-    this.pollTimer  = null;
-    this.kaTimer    = null;
-    this.startMs    = Date.now();
-    this.consecErrors = 0;         // consecutive poll errors (reset on success)
+    this.running        = false;
+    this.pollTimer      = null;
+    this.kaTimer        = null;
+    this.proactiveTimer = null;
+    this.startMs        = Date.now();
+    this.consecErrors   = 0;       // consecutive poll errors (reset on success)
   }
 
   // ── Start ──────────────────────────────────────────────────
@@ -64,6 +66,15 @@ class LiveRelay {
     console.log(`[Relay] ${this.roomId}: started (ratingKey=${this.ratingKey})`);
     this._poll();
     this._startKeepalive();
+    // Proactively retune before the DVR session expires (~4 min TTL)
+    if (this.onStall) {
+      this.proactiveTimer = setTimeout(() => {
+        if (this.running) {
+          console.log(`[Relay] ${this.roomId}: proactive retune at ${Math.round((Date.now() - this.startMs) / 1000)}s`);
+          this.onStall();
+        }
+      }, PROACTIVE_RETUNE_MS);
+    }
   }
 
   // Build start.m3u8 URL with all required Plex params
@@ -203,8 +214,9 @@ class LiveRelay {
   // ── Stop ───────────────────────────────────────────────────
   stop() {
     this.running = false;
-    if (this.pollTimer) { clearTimeout(this.pollTimer);  this.pollTimer = null; }
-    if (this.kaTimer)   { clearInterval(this.kaTimer);   this.kaTimer   = null; }
+    if (this.pollTimer)      { clearTimeout(this.pollTimer);       this.pollTimer      = null; }
+    if (this.kaTimer)        { clearInterval(this.kaTimer);        this.kaTimer        = null; }
+    if (this.proactiveTimer) { clearTimeout(this.proactiveTimer);  this.proactiveTimer = null; }
     this.segments.clear();
     this.order = [];
     this.seen.clear();

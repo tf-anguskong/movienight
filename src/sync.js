@@ -55,6 +55,7 @@ class Room {
     this.liveTvChannelTitle = null;  // e.g. 'KIRO/CBS'
     this.liveTvChannelId    = null;  // DVR channel ID for re-tuning
     this.liveTvSubKey       = null;  // Plex MediaSubscription key for current tune
+    this.retuning           = false; // guard against concurrent retunes
     this.movieKey       = null;
     this.movieTitle     = null;
     this.partId         = null;
@@ -173,27 +174,39 @@ function formatEpisodeTitle(showTitle, ep) {
 // ── Live TV retune — restarts the server-side relay with a fresh Plex session ──
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
+  if (room.retuning) return; // prevent concurrent retunes (e.g. proactive + stall firing together)
+  room.retuning = true;
   const liveTvManager = require('./livetv-manager');
   try {
-    if (room.liveTvSubKey) {
-      await liveTvManager.stopSubscription(room.liveTvSubKey).catch(() => {});
-    }
+    const oldSubKey = room.liveTvSubKey;
     clearRoomManifest(room.id);
-    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId);
+
+    // Use a unique clientId so Plex creates a fresh subscription rather than
+    // deduplicating and returning the same stale one. This lets us tune BEFORE
+    // stopping the old subscription — the old relay keeps its valid session and
+    // can continue fetching new segments during the warm-swap.
+    const freshClientId = `movienight-app-r${Date.now()}`;
+    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId, freshClientId);
     room.liveTvSubKey = subKey;
     room.movieKey     = String(ratingKey);
     room.playing      = true;
     room.position     = 0;
     room.lastUpdate   = Date.now();
 
-    // Restart relay — warm-swaps: new relay buffers before old one stops.
-    // No livetv-reload needed; clients self-recover via stable relay URL.
+    // Warm-swap: new relay buffers alongside the still-valid old relay.
+    // Clients never see a 503 gap.
     await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
+
+    // Old subscription stopped AFTER swap — old relay had a live session right
+    // up until the moment it was replaced.
+    if (oldSubKey) liveTvManager.stopSubscription(oldSubKey).catch(() => {});
 
     room.broadcastState(io);
     console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey})`);
   } catch (err) {
     console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
+  } finally {
+    room.retuning = false;
   }
 }
 

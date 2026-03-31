@@ -132,7 +132,9 @@ async function stopSubscription(subKey) {
 }
 
 // Tune a live TV channel via Plex DVR — returns { ratingKey, subKey }
-async function tuneChannel(channelId) {
+// Pass a unique clientId to force Plex to create a fresh subscription instead of
+// deduplicating and returning the same stale one (used during proactive retune).
+async function tuneChannel(channelId, clientId = CLIENT_ID) {
   // Validate channelId is not empty (Plex may return numeric or string IDs)
   if (!channelId || typeof String(channelId).trim() !== 'string' || !String(channelId).trim()) {
     throw new Error('Invalid channelId: must be a non-empty string');
@@ -144,7 +146,7 @@ async function tuneChannel(channelId) {
   const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
   const { data } = await axios.post(url, null, {
     headers,
-    params: { 'X-Plex-Client-Identifier': CLIENT_ID },
+    params: { 'X-Plex-Client-Identifier': clientId },
     timeout: 15000,
   });
 
@@ -158,7 +160,7 @@ async function tuneChannel(channelId) {
     await new Promise(r => setTimeout(r, 2000));
     const retry = await axios.post(url, null, {
       headers,
-      params: { 'X-Plex-Client-Identifier': CLIENT_ID },
+      params: { 'X-Plex-Client-Identifier': clientId },
       timeout: 15000,
     });
     const sub2 = retry.data?.MediaContainer?.MediaSubscription?.[0];
