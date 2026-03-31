@@ -187,7 +187,7 @@ async function doRetune(room, io) {
     room.lastUpdate   = Date.now();
 
     // Restart relay with fresh Plex session
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null });
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
     await new Promise(r => setTimeout(r, 3000)); // wait for initial segments
 
     room.broadcastState(io);
@@ -453,7 +453,7 @@ function setupSync(io, enabledRoomTypes) {
 
         // Start server-side relay — continuously fetches segments from Plex so
         // the session never expires. Clients connect to /api/stream/live/:roomId/index.m3u8.
-        await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null });
+        await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
         await new Promise(r => setTimeout(r, 3000)); // wait for initial segments to buffer
 
         room.broadcastState(io);

@@ -23,16 +23,18 @@ const PLEX_TOKEN    = process.env.LIVETV_PLEX_TOKEN || process.env.PLEX_TOKEN ||
 const CLIENT_ID     = process.env.PLEX_CLIENT_ID    || 'movienight-app';
 
 const POLL_MS      = 2000;   // variant playlist poll interval
-const KEEPALIVE_MS = 8000;   // DVR subscription keepalive interval
+const KEEPALIVE_MS = 3000;   // DVR subscription keepalive interval (~2.6s in native Plex)
 const SEG_TIMEOUT  = 15000;  // max ms to wait for a segment download
 const MAX_SEGS     = 10;     // segments kept in memory (circular buffer)
 const READY_SEGS   = 3;      // segments needed before relay is considered ready
+const STALL_THRESH = 5;      // consecutive poll errors before triggering onStall
 
 class LiveRelay {
-  constructor(roomId, { ratingKey, liveSessionKey }) {
+  constructor(roomId, { ratingKey, liveSessionKey, onStall }) {
     this.roomId       = roomId;
     this.ratingKey    = String(ratingKey);
     this.liveSessionKey = liveSessionKey || null; // /livetv/sessions/{uuid}
+    this.onStall      = onStall || null;          // called after STALL_THRESH consecutive errors
 
     // Unique IDs for this relay's Plex session
     this.sessionId  = `mn-relay-${roomId.replace(/[^a-z0-9]/gi, '').slice(0, 8)}-${this.ratingKey.slice(0, 8)}`;
@@ -49,6 +51,7 @@ class LiveRelay {
     this.pollTimer  = null;
     this.kaTimer    = null;
     this.startMs    = Date.now();
+    this.consecErrors = 0;         // consecutive poll errors (reset on success)
   }
 
   // ── Start ──────────────────────────────────────────────────
@@ -100,7 +103,15 @@ class LiveRelay {
   _poll() {
     if (!this.running) return;
     this._doOnePoll()
-      .catch(err => console.warn(`[Relay] ${this.roomId}: poll error — ${err.message}`))
+      .then(() => { this.consecErrors = 0; })
+      .catch(err => {
+        this.consecErrors++;
+        console.warn(`[Relay] ${this.roomId}: poll error (${this.consecErrors}/${STALL_THRESH}) — ${err.message}`);
+        if (this.consecErrors === STALL_THRESH && this.onStall) {
+          console.warn(`[Relay] ${this.roomId}: stall threshold reached — triggering retune`);
+          this.onStall();
+        }
+      })
       .finally(() => {
         if (this.running) this.pollTimer = setTimeout(() => this._poll(), POLL_MS);
       });
