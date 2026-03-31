@@ -186,12 +186,11 @@ async function doRetune(room, io) {
     room.position     = 0;
     room.lastUpdate   = Date.now();
 
-    // Restart relay with fresh Plex session
+    // Restart relay — warm-swaps: new relay buffers before old one stops.
+    // No livetv-reload needed; clients self-recover via stable relay URL.
     await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
-    await new Promise(r => setTimeout(r, 3000)); // wait for initial segments
 
     room.broadcastState(io);
-    room.broadcast(io, 'livetv-reload'); // clients restart their HLS player
     console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey})`);
   } catch (err) {
     console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
@@ -454,7 +453,6 @@ function setupSync(io, enabledRoomTypes) {
         // Start server-side relay — continuously fetches segments from Plex so
         // the session never expires. Clients connect to /api/stream/live/:roomId/index.m3u8.
         await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
-        await new Promise(r => setTimeout(r, 3000)); // wait for initial segments to buffer
 
         room.broadcastState(io);
         console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);

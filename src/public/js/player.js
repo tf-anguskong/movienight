@@ -14,8 +14,9 @@ const syncText    = document.getElementById('sync-text');
 
 let isSyncing        = false;
 let syncTimer        = null;
-let currentKey       = null;
-let activeLiveTvChannel = null; // channel number for guide highlighting
+let currentKey          = null;
+let currentLiveTvChannel = null; // channel number/id — stable across retune (unlike movieKey/ratingKey)
+let activeLiveTvChannel = null;  // channel number for guide highlighting
 let hlsInstance      = null;
 let isHost           = false;
 let roomType         = 'movie';
@@ -102,6 +103,7 @@ socket.on('room-state', (state) => {
   // This prevents stale connections from previous rooms/sessions
   if (roomType === 'livetv') {
     currentKey = null;
+    currentLiveTvChannel = null;
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   }
   setHostUI(isHost, state.inviteToken);
@@ -521,9 +523,14 @@ function applyLiveTvState(state) {
   // Track the active channel number for guide highlighting
   activeLiveTvChannel = state.liveTvChannel || null;
 
-  // Channel change → reload stream from server-side relay
-  if (state.movieKey && state.movieKey !== currentKey) {
-    currentKey = state.movieKey;
+  // Always keep currentKey in sync with the server's ratingKey
+  currentKey = state.movieKey || currentKey;
+
+  // Only reload the HLS player when the channel itself changes (not on retune,
+  // which assigns a new ratingKey/movieKey to the same channel — the relay URL
+  // is stable and the warm-swap means segments are already buffered).
+  if (state.movieKey && state.liveTvChannel !== currentLiveTvChannel) {
+    currentLiveTvChannel = state.liveTvChannel;
     loadLiveTvRelay();
   }
 

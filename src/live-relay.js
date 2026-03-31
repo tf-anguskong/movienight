@@ -290,19 +290,36 @@ class LiveRelay {
 const relays = new Map(); // roomId → LiveRelay
 
 /**
- * Start (or restart) the relay for a room. Resolves once start.m3u8 is fetched
- * and the first variant URL is found. Segments begin buffering immediately after.
+ * Start (or restart) the relay for a room.
+ *
+ * If an existing relay is running, it keeps serving clients while the new relay
+ * warms up in the background. Once the new relay has READY_SEGS buffered, the
+ * relays are swapped atomically — clients never see a 503 gap.
  */
 async function startRelay(roomId, opts) {
-  stopRelay(roomId);
+  const existing = relays.get(roomId);
   const relay = new LiveRelay(roomId, opts);
-  relays.set(roomId, relay);
+
+  // Start the new relay — fetches master playlist and begins segment polling.
+  // The existing relay (if any) keeps serving clients during this time.
   try {
     await relay.start();
   } catch (err) {
-    relays.delete(roomId);
     throw err;
   }
+
+  // Wait until the new relay has enough segments to serve without gaps (max 10s).
+  await new Promise(resolve => {
+    const t = setInterval(() => {
+      if (relay.isReady()) { clearInterval(t); resolve(); }
+    }, 200);
+    setTimeout(() => { clearInterval(t); resolve(); }, 10000);
+  });
+
+  // Atomically swap: new relay takes over, old relay stops.
+  relays.set(roomId, relay);
+  if (existing) existing.stop();
+
   return relay;
 }
 
