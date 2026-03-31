@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const { clearRoomManifest, prewarmManifest, registerLiveTvSessionKey } = require('./routes/stream');
+const { clearRoomManifest, prewarmManifest } = require('./routes/stream');
+const { startRelay, stopRelay } = require('./live-relay');
 const plex = require('./plex');
 const { sanitizeText } = require('./sanitize');
 
@@ -169,37 +170,28 @@ function formatEpisodeTitle(showTitle, ep) {
   return `${showTitle ? showTitle + ' · ' : ''}${se}${ep.title || ''}`;
 }
 
-// ── Live TV retune (reactive only — called when HLS stream fails) ─────────
+// ── Live TV retune — restarts the server-side relay with a fresh Plex session ──
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
   const liveTvManager = require('./livetv-manager');
   try {
-    // DELETE the current subscription so Plex creates a genuinely fresh session.
-    // Without this, retune returns the same ratingKey and the dying session continues.
     if (room.liveTvSubKey) {
       await liveTvManager.stopSubscription(room.liveTvSubKey).catch(() => {});
     }
     clearRoomManifest(room.id);
     const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId);
     room.liveTvSubKey = subKey;
-    if (sessionKey) registerLiveTvSessionKey(room.id, ratingKey, sessionKey);
+    room.movieKey     = String(ratingKey);
+    room.playing      = true;
+    room.position     = 0;
+    room.lastUpdate   = Date.now();
 
-    // Pre-warm: start the new Plex transcode session and cache its manifest
-    // before telling clients to switch. Clients get an instant cache hit when
-    // they request the new manifest, and Plex has had ~1.5s to buffer the first
-    // segments — cutting black-screen time from ~7s to ~2s.
-    await prewarmManifest(room.id, ratingKey, true, room.liveTvChannelId, subKey).catch(() => {});
-    await new Promise(r => setTimeout(r, 1500));
+    // Restart relay with fresh Plex session
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null });
+    await new Promise(r => setTimeout(r, 3000)); // wait for initial segments
 
-    const keyChanged = ratingKey !== room.movieKey;
-    room.movieKey    = ratingKey;
-    room.playing     = true;
-    room.position    = 0;
-    room.lastUpdate  = Date.now();
-    // If ratingKey is unchanged the clients won't detect the new session from state
-    // alone — force them to reload the HLS manifest explicitly.
-    if (!keyChanged) room.broadcast(io, 'livetv-reload');
     room.broadcastState(io);
+    room.broadcast(io, 'livetv-reload'); // clients restart their HLS player
     console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey})`);
   } catch (err) {
     console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
@@ -446,7 +438,7 @@ function setupSync(io, enabledRoomTypes) {
       }
       room._tuningInProgress = true;
 
-      clearRoomManifest(room.id); // stop any existing Plex transcode session
+      clearRoomManifest(room.id);
       try {
         const liveTvManager = require('./livetv-manager');
         const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(channelId);
@@ -454,14 +446,15 @@ function setupSync(io, enabledRoomTypes) {
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
         room.liveTvChannelId    = channelId;
         room.liveTvSubKey       = subKey;
-        if (sessionKey) registerLiveTvSessionKey(room.id, ratingKey, sessionKey);
-        room.movieKey   = ratingKey;
-        room.playing    = true;
-        room.position   = 0;
-        room.lastUpdate = Date.now();
+        room.movieKey           = String(ratingKey);
+        room.playing            = true;
+        room.position           = 0;
+        room.lastUpdate         = Date.now();
 
-        // Pre-warm the manifest so clients get instant playback
-        await prewarmManifest(room.id, ratingKey, true, channelId, subKey).catch(() => {});
+        // Start server-side relay — continuously fetches segments from Plex so
+        // the session never expires. Clients connect to /api/stream/live/:roomId/index.m3u8.
+        await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null });
+        await new Promise(r => setTimeout(r, 3000)); // wait for initial segments to buffer
 
         room.broadcastState(io);
         console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);
@@ -755,6 +748,7 @@ function setupSync(io, enabledRoomTypes) {
           // Guest hosts cannot reconnect — close the room immediately
           console.log(`[Room] Guest host "${user.name}" disconnected from "${room.name}" — closing`);
           room.broadcast(io, 'room-closed', { reason: 'Host left the room' });
+          stopRelay(room.id);
           inviteTokens.delete(room.inviteToken);
           rooms.delete(room.id);
           broadcastRoomList(io);
@@ -766,6 +760,7 @@ function setupSync(io, enabledRoomTypes) {
             if (!rooms.has(room.id)) return; // already cleaned up
             console.log(`[Room] "${room.name}" closed — host did not reconnect`);
             room.broadcast(io, 'room-closed', { reason: 'Host left the room' });
+            stopRelay(room.id);
             inviteTokens.delete(room.inviteToken);
             rooms.delete(room.id);
             broadcastRoomList(io);

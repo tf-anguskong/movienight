@@ -122,11 +122,10 @@ socket.on('kicked', () => {
 
 socket.on('state', applyState);
 
-// Server-side retune produced the same ratingKey — DASH manifest cache won't
-// detect a change, so the server broadcasts this to force a fresh manifest fetch.
+// Server restarted the relay (retune or channel change) — reload the HLS player.
 socket.on('livetv-reload', () => {
-  if (roomType !== 'livetv' || !currentKey) return;
-  loadLiveTvDash(currentKey);
+  if (roomType !== 'livetv') return;
+  loadLiveTvRelay();
 });
 
 socket.on('room-error', (msg) => {
@@ -376,47 +375,41 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
   }
 }
 
-// ── Live TV player (HLS via Plex transcode proxy) ────────────
-let dashPlayer = null;
-
-function loadLiveTvDash(ratingKey, bust = false) {
-  if (dashPlayer) { dashPlayer.destroy(); dashPlayer = null; }
+// ── Live TV player (server-side relay → HLS) ─────────────────
+// Connects to /api/stream/live/:roomId/index.m3u8 — a server-managed HLS
+// buffer that continuously fetches from Plex. The relay URL is stable across
+// channel changes; clients restart their HLS player on livetv-reload.
+function loadLiveTvRelay() {
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
+  video.style.display = 'block';
+  noMovie.style.display = 'none';
 
-  // Use DASH endpoint — only protocol where Plex accepts path=/livetv/sessions/{uuid}
-  const src = `/api/stream/dash/${roomId}/${ratingKey}/manifest.mpd${bust ? '?bust=1' : ''}`;
+  const src = `/api/stream/live/${roomId}/index.m3u8`;
 
-  if (typeof dashjs === 'undefined') {
-    console.error('[LiveTV] dash.js not loaded');
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 });
+    hlsInstance.loadSource(src);
+    hlsInstance.attachMedia(video);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      console.log('[LiveTV] Relay manifest loaded');
+      releaseSyncLock();
+      tryPlay();
+    });
+    hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+      if (!data.fatal) return;
+      console.error('[LiveTV] HLS fatal error:', data.type, data.details);
+      // Tell the server to retune — it will restart the relay and emit livetv-reload
+      if (isHost) socket.emit('retune-livetv');
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = src;
-    tryPlay();
-    return;
+    video.addEventListener('loadedmetadata', () => {
+      releaseSyncLock();
+      tryPlay();
+    }, { once: true });
   }
-
-  let retryCount = 0;
-  const MAX_RETRIES = 3;
-
-  dashPlayer = dashjs.MediaPlayer().create();
-  dashPlayer.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
-  dashPlayer.initialize(video, src, true);
-
-  dashPlayer.on(dashjs.MediaPlayer.events.MANIFEST_LOADED, () => {
-    console.log('[LiveTV DASH] Manifest loaded');
-    releaseSyncLock();
-    tryPlay();
-  });
-
-  dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-    console.error('[LiveTV DASH] Error:', e.error);
-    if (retryCount >= MAX_RETRIES) return;
-    retryCount++;
-    console.log(`[LiveTV DASH] Stream error — retuning (attempt ${retryCount})`);
-    setTimeout(() => {
-      loadLiveTvDash(ratingKey, true); // bust=1 triggers server-side retune
-    }, 1500 * retryCount);
-  });
 }
 
 // Legacy HLS loader kept for backwards compatibility but not used for LiveTV
@@ -528,10 +521,10 @@ function applyLiveTvState(state) {
   // Track the active channel number for guide highlighting
   activeLiveTvChannel = state.liveTvChannel || null;
 
-  // Channel change → reload stream via Plex transcode proxy (using DASH for LiveTV)
+  // Channel change → reload stream from server-side relay
   if (state.movieKey && state.movieKey !== currentKey) {
     currentKey = state.movieKey;
-    loadLiveTvDash(state.movieKey);
+    loadLiveTvRelay();
   }
 
   // Compute target from server state — same smooth extrapolation as movie sync
