@@ -45,6 +45,7 @@ class LiveRelay {
     this.sessionId  = `mn-relay-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
     this.playbackId = crypto.randomUUID();
     this.bgId       = crypto.randomUUID();
+    this.segPrefix  = `r${Date.now().toString(36)}`; // unique prefix to avoid segment name collisions across retunes
 
     this.variantUrl = null;
     this.segments   = new Map();   // segmentName → Buffer
@@ -286,7 +287,9 @@ class LiveRelay {
         extinf = false;
         // Strip query string for dedup key (tokens may vary); use path only
         const stripped = t.split('?')[0];
-        const name     = stripped.split('/').pop();
+        const rawName  = stripped.split('/').pop();
+        // Prefix with unique ID to avoid segment name collisions across retunes
+        const name     = `${this.segPrefix}-${rawName}`;
         const url      = this._resolve(stripped, dirUrl);
         out.push({ name, url });
       } else if (t && !t.startsWith('#')) {
