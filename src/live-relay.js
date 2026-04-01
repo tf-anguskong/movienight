@@ -133,6 +133,7 @@ class LiveRelay {
 
   async _doOnePoll() {
     const text = await this._fetchText(this.variantUrl);
+    console.log(`[Relay] ${this.roomId}: variant playlist received, length=${text.length}`);
     const segs = this._parseSegs(text, this.variantUrl);
 
     for (const { name, url } of segs) {
@@ -232,11 +233,16 @@ class LiveRelay {
 
   // ── HTTP helpers ───────────────────────────────────────────
   async _fetchText(url) {
-    const r = await axios.get(url, {
-      headers: { 'X-Plex-Token': PLEX_TOKEN },
-      timeout: 10000,
-    });
-    return typeof r.data === 'string' ? r.data : String(r.data);
+    try {
+      const r = await axios.get(url, {
+        headers: { 'X-Plex-Token': PLEX_TOKEN },
+        timeout: 10000,
+      });
+      return typeof r.data === 'string' ? r.data : String(r.data);
+    } catch (err) {
+      console.warn(`[Relay] ${this.roomId}: _fetchText failed — ${url.slice(0,200)} — ${err.message}`);
+      throw err;
+    }
   }
 
   async _fetchBin(url) {
