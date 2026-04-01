@@ -63,6 +63,7 @@ class LiveRelay {
   async start() {
     this.running = true;
     const masterUrl  = this._buildMasterUrl();
+    console.log(`[Relay] ${this.roomId}: fetching master from ${masterUrl.slice(0,200)}`);
     const masterText = await this._fetchText(masterUrl);
     const baseDir    = `${PLEX_BASE_URL}/video/:/transcode/universal/`;
     this.variantUrl  = this._pickVariant(masterText, baseDir);
