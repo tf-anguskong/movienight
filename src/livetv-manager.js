@@ -120,6 +120,7 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
   if (!cachedDvrKey) await fetchDvrInfo(headers);
 
   const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
+  console.log(`[LiveTV] tuneChannel URL: ${url} clientId: ${clientId}`);
   const { data } = await axios.post(url, null, {
     headers,
     params: { 'X-Plex-Client-Identifier': clientId },
