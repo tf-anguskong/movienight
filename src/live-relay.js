@@ -31,10 +31,11 @@ const STALL_THRESH        = 2;       // consecutive poll errors before triggerin
 const PROACTIVE_RETUNE_MS = 200_000; // 3:20 — proactive retune before 4-min DVR session expiry
 
 class LiveRelay {
-  constructor(roomId, { ratingKey, liveSessionKey, onStall }) {
+  constructor(roomId, { ratingKey, liveSessionKey, clientId, onStall }) {
     this.roomId       = roomId;
     this.ratingKey    = String(ratingKey);
     this.liveSessionKey = liveSessionKey || null; // /livetv/sessions/{uuid}
+    this.clientId     = clientId || CLIENT_ID;
     this.onStall      = onStall || null;          // called after STALL_THRESH consecutive errors
 
     // Unique IDs for this relay's Plex session.
@@ -85,7 +86,7 @@ class LiveRelay {
   _buildMasterUrl() {
     const params = {
       'X-Plex-Token'              : PLEX_TOKEN,
-      'X-Plex-Client-Identifier'  : CLIENT_ID,
+      'X-Plex-Client-Identifier'  : this.clientId,
       'X-Plex-Session-Identifier' : this.sessionId,
       'X-Plex-Product'            : 'Movie Night',
       'X-Plex-Platform'           : 'Chrome',
@@ -165,7 +166,7 @@ class LiveRelay {
       axios.get(`${PLEX_BASE_URL}/:/timeline`, {
         params: {
           'X-Plex-Token'              : PLEX_TOKEN,
-          'X-Plex-Client-Identifier'  : CLIENT_ID,
+          'X-Plex-Client-Identifier'  : this.clientId,
           'X-Plex-Session-Identifier' : this.sessionId,
           'X-Plex-Session-Id'         : this.bgId,
           'X-Plex-Playback-Session-Id': this.playbackId,
@@ -180,7 +181,7 @@ class LiveRelay {
       axios.get(`${PLEX_BASE_URL}/status/sessions/background`, {
         params: {
           'X-Plex-Token'              : PLEX_TOKEN,
-          'X-Plex-Client-Identifier'  : CLIENT_ID,
+          'X-Plex-Client-Identifier'  : this.clientId,
           'X-Plex-Session-Id'         : this.bgId,
           'X-Plex-Playback-Session-Id': this.playbackId,
         }

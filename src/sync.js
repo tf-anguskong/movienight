@@ -195,7 +195,7 @@ async function doRetune(room, io) {
 
     // Warm-swap: new relay buffers alongside the still-valid old relay.
     // Clients never see a 503 gap.
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId: freshClientId, onStall: () => doRetune(room, io) });
 
     // Old subscription stopped AFTER swap — old relay had a live session right
     // up until the moment it was replaced.
