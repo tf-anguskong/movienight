@@ -22,11 +22,11 @@ const PLEX_BASE_URL = process.env.LIVETV_PLEX_HOST  || process.env.PLEX_URL   ||
 const PLEX_TOKEN    = process.env.LIVETV_PLEX_TOKEN || process.env.PLEX_TOKEN || '';
 const CLIENT_ID     = process.env.PLEX_CLIENT_ID    || 'movienight-app';
 
-const POLL_MS      = 2000;   // variant playlist poll interval
+const POLL_MS      = 500;   // variant playlist poll interval (reduced for faster segment fetching)
 const KEEPALIVE_MS = 3000;   // DVR subscription keepalive interval (~2.6s in native Plex)
 const SEG_TIMEOUT  = 15000;  // max ms to wait for a segment download
 const MAX_SEGS     = 10;     // segments kept in memory (circular buffer)
-const READY_SEGS   = 3;      // segments needed before relay is considered ready
+const READY_SEGS   = 1;      // segments needed before relay is considered ready (reduced for faster swap)
 const STALL_THRESH        = 2;       // consecutive poll errors before triggering onStall (fallback)
 const PROACTIVE_RETUNE_MS = 200_000; // 3:20 — proactive retune before 4-min DVR session expiry
 
