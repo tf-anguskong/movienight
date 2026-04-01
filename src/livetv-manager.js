@@ -121,11 +121,18 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
 
   const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
   console.log(`[LiveTV] tuneChannel URL: ${url} clientId: ${clientId}`);
-  const { data } = await axios.post(url, null, {
-    headers,
-    params: { 'X-Plex-Client-Identifier': clientId },
-    timeout: 15000,
-  });
+  let data;
+  try {
+    const res = await axios.post(url, null, {
+      headers,
+      params: { 'X-Plex-Client-Identifier': clientId },
+      timeout: 15000,
+    });
+    data = res.data;
+  } catch (err) {
+    console.error(`[LiveTV] tuneChannel failed: ${err.response?.status} ${err.response?.data || err.message}`);
+    throw err;
+  }
 
   // The tune response nests metadata under MediaSubscription[0].MediaGrabOperation[0].Metadata
   const sub  = data?.MediaContainer?.MediaSubscription?.[0];
