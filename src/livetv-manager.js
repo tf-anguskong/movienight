@@ -145,7 +145,7 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
       throw new Error('Tune response missing ratingKey (after retry)');
     }
     console.log(`[LiveTV] Retuned channel ${channelId} → ratingKey ${meta2.ratingKey} (sub ${sub2.key})`);
-    return { ratingKey: String(meta2.ratingKey), subKey: sub2.key, sessionKey: meta2.key };
+    return { ratingKey: String(meta2.ratingKey), subKey: sub2.key };
   }
 
   // meta.key is '/livetv/sessions/{uuid}' — needed as the 'key' param in /:/timeline

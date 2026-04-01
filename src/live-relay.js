@@ -94,7 +94,7 @@ class LiveRelay {
       'X-Plex-Playback-Session-Id': this.playbackId,
       'X-Plex-Session-Id'         : this.bgId,
       hasMDE                      : '1',
-      path                        : this.liveSessionKey || `/library/metadata/${this.ratingKey}`,
+      path                        : `/library/metadata/${this.ratingKey}`,
       videoResolution             : '1920x1080',
       maxVideoBitrate             : '8000',
       videoCodec                  : 'h264',
