@@ -405,11 +405,11 @@ function loadLiveTvRelay() {
       hlsInstance.on(Hls.Events.ERROR, (event, data) => {
         if (!data.fatal) return;
         console.error('[LiveTV] HLS fatal error:', data.type, data.details);
-        // Seamless recovery: just reload source instead of destroying instance
         if (hlsInstance) {
           hlsInstance.loadSource(src);
         }
       });
+      hlsInstance.loadSource(src);
     } else {
       hlsInstance.loadSource(src);
     }
