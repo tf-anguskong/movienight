@@ -136,14 +136,19 @@ class LiveRelay {
     const text = await this._fetchText(this.variantUrl);
     console.log(`[Relay] ${this.roomId}: variant playlist received, length=${text.length}`);
     const segs = this._parseSegs(text, this.variantUrl);
+    console.log(`[Relay] ${this.roomId}: parsed ${segs.length} segments from variant playlist`);
 
     for (const { name, url } of segs) {
-      if (this.seen.has(name)) continue;
+      if (this.seen.has(name)) {
+        console.log(`[Relay] ${this.roomId}: skip segment ${name} (already seen)`);
+        continue;
+      }
       this.seen.add(name);
       try {
         const buf = await this._fetchBin(url);
         this.segments.set(name, buf);
         this.order.push(name);
+        console.log(`[Relay] ${this.roomId}: fetched segment ${name}, buffer=${this.order.length}/${MAX_SEGS}`);
         // Evict oldest to stay within buffer limit
         if (this.order.length > MAX_SEGS) {
           this.segments.delete(this.order.shift());
