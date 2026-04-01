@@ -63,7 +63,6 @@ class LiveRelay {
   async start() {
     this.running = true;
     const masterUrl  = this._buildMasterUrl();
-    console.log(`[Relay] ${this.roomId}: fetching master from ${masterUrl.slice(0,200)}`);
     const masterText = await this._fetchText(masterUrl);
     const baseDir    = `${PLEX_BASE_URL}/video/:/transcode/universal/`;
     this.variantUrl  = this._pickVariant(masterText, baseDir);
@@ -134,21 +133,15 @@ class LiveRelay {
 
   async _doOnePoll() {
     const text = await this._fetchText(this.variantUrl);
-    console.log(`[Relay] ${this.roomId}: variant playlist received, length=${text.length}`);
     const segs = this._parseSegs(text, this.variantUrl);
-    console.log(`[Relay] ${this.roomId}: parsed ${segs.length} segments from variant playlist`);
 
     for (const { name, url } of segs) {
-      if (this.seen.has(name)) {
-        console.log(`[Relay] ${this.roomId}: skip segment ${name} (already seen)`);
-        continue;
-      }
+      if (this.seen.has(name)) continue;
       this.seen.add(name);
       try {
         const buf = await this._fetchBin(url);
         this.segments.set(name, buf);
         this.order.push(name);
-        console.log(`[Relay] ${this.roomId}: fetched segment ${name}, buffer=${this.order.length}/${MAX_SEGS}`);
         // Evict oldest to stay within buffer limit
         if (this.order.length > MAX_SEGS) {
           this.segments.delete(this.order.shift());
@@ -239,16 +232,11 @@ class LiveRelay {
 
   // ── HTTP helpers ───────────────────────────────────────────
   async _fetchText(url) {
-    try {
-      const r = await axios.get(url, {
-        headers: { 'X-Plex-Token': PLEX_TOKEN },
-        timeout: 10000,
-      });
-      return typeof r.data === 'string' ? r.data : String(r.data);
-    } catch (err) {
-      console.warn(`[Relay] ${this.roomId}: _fetchText failed — ${url.slice(0,200)} — ${err.message}`);
-      throw err;
-    }
+    const r = await axios.get(url, {
+      headers: { 'X-Plex-Token': PLEX_TOKEN },
+      timeout: 10000,
+    });
+    return typeof r.data === 'string' ? r.data : String(r.data);
   }
 
   async _fetchBin(url) {
