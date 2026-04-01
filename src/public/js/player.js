@@ -395,7 +395,17 @@ function loadLiveTvRelay() {
 
   if (Hls.isSupported()) {
     if (!hlsInstance) {
-      hlsInstance = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 });
+      hlsInstance = new Hls({
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        liveDurationInfinity: true,
+        fragLoadingMaxRetry: 6,
+        manifestLoadingMaxRetry: 3,
+        manifestLoadingRetryDelay: 1000,
+        fragLoadingRetryDelay: 1000,
+        startFragPrefetch: true,
+        testBandwidth: false,
+      });
       hlsInstance.attachMedia(video);
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log('[LiveTV] Relay manifest loaded');
@@ -403,8 +413,9 @@ function loadLiveTvRelay() {
         tryPlay();
       });
       hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+        console.error('[LiveTV] HLS error:', data.type, data.details, data.fatal);
         if (!data.fatal) return;
-        console.error('[LiveTV] HLS fatal error:', data.type, data.details);
+        console.log('[LiveTV] Fatal error - recovering by reloading source');
         if (hlsInstance) {
           hlsInstance.loadSource(src);
         }
