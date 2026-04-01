@@ -181,12 +181,9 @@ async function doRetune(room, io) {
     const oldSubKey = room.liveTvSubKey;
     clearRoomManifest(room.id);
 
-    // Use a unique clientId so Plex creates a fresh subscription rather than
-    // deduplicating and returning the same stale one. This lets us tune BEFORE
-    // stopping the old subscription — the old relay keeps its valid session and
-    // can continue fetching new segments during the warm-swap.
-    const freshClientId = `movienight-app-r${Date.now()}`;
-    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId, freshClientId);
+    // Use the default clientId - retuning with a different clientId causes 400 errors from Plex
+    const clientId = 'movienight-app';
+    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId, clientId);
     room.liveTvSubKey = subKey;
     room.movieKey     = String(ratingKey);
     room.playing      = true;
@@ -195,7 +192,7 @@ async function doRetune(room, io) {
 
     // Warm-swap: new relay buffers alongside the still-valid old relay.
     // Clients never see a 503 gap.
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId: freshClientId, onStall: () => doRetune(room, io) });
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId, onStall: () => doRetune(room, io) });
 
     // Old subscription stopped AFTER swap — old relay had a live session right
     // up until the moment it was replaced.
