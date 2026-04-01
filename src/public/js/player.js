@@ -124,10 +124,14 @@ socket.on('kicked', () => {
 
 socket.on('state', applyState);
 
-// Server restarted the relay (retune or channel change) — reload the HLS player.
+// Server restarted the relay (retune or channel change) — reload the HLS player seamlessly.
 socket.on('livetv-reload', () => {
   if (roomType !== 'livetv') return;
-  loadLiveTvRelay();
+  if (hlsInstance) {
+    hlsInstance.loadSource(`/api/stream/live/${roomId}/index.m3u8`);
+  } else {
+    loadLiveTvRelay();
+  }
 });
 
 socket.on('room-error', (msg) => {
@@ -380,9 +384,8 @@ function loadHls(ratingKey, targetTime, shouldPlay) {
 // ── Live TV player (server-side relay → HLS) ─────────────────
 // Connects to /api/stream/live/:roomId/index.m3u8 — a server-managed HLS
 // buffer that continuously fetches from Plex. The relay URL is stable across
-// channel changes; clients restart their HLS player on livetv-reload.
+// channel changes; clients reload on livetv-reload for seamless recovery.
 function loadLiveTvRelay() {
-  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
   hidePlayOverlay();
   document.getElementById('yt-player-container').style.display = 'none';
   video.style.display = 'block';
@@ -391,21 +394,27 @@ function loadLiveTvRelay() {
   const src = `/api/stream/live/${roomId}/index.m3u8`;
 
   if (Hls.isSupported()) {
-    hlsInstance = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 });
-    hlsInstance.loadSource(src);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      console.log('[LiveTV] Relay manifest loaded');
-      releaseSyncLock();
-      tryPlay();
-    });
-    hlsInstance.on(Hls.Events.ERROR, (event, data) => {
-      if (!data.fatal) return;
-      console.error('[LiveTV] HLS fatal error:', data.type, data.details);
-      // Tell the server to retune — it will restart the relay and emit livetv-reload
-      if (isHost) socket.emit('retune-livetv');
-    });
+    if (!hlsInstance) {
+      hlsInstance = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 });
+      hlsInstance.attachMedia(video);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('[LiveTV] Relay manifest loaded');
+        releaseSyncLock();
+        tryPlay();
+      });
+      hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+        if (!data.fatal) return;
+        console.error('[LiveTV] HLS fatal error:', data.type, data.details);
+        // Seamless recovery: just reload source instead of destroying instance
+        if (hlsInstance) {
+          hlsInstance.loadSource(src);
+        }
+      });
+    } else {
+      hlsInstance.loadSource(src);
+    }
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     video.src = src;
     video.addEventListener('loadedmetadata', () => {
       releaseSyncLock();
@@ -413,82 +422,6 @@ function loadLiveTvRelay() {
     }, { once: true });
   }
 }
-
-// Legacy HLS loader kept for backwards compatibility but not used for LiveTV
-function loadLiveTvHls(ratingKey) {
-  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-  hidePlayOverlay();
-  document.getElementById('yt-player-container').style.display = 'none';
-
-  const src = `/api/stream/hls/${roomId}/${ratingKey}/master.m3u8?live=1`;
-
-  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-    hlsInstance = new Hls({ enableWorker: true });
-    hlsInstance.loadSource(src);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      tryPlay();
-      releaseSyncLock();
-    });
-    let liveTvRetryCount = 0;
-    const LIVE_TV_MAX_RETRIES = 4;
-    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal) return;
-      if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        console.warn('[LiveTV] Media error, recovering:', d.details);
-        hlsInstance.recoverMediaError();
-      } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR && liveTvRetryCount < LIVE_TV_MAX_RETRIES) {
-        liveTvRetryCount++;
-        // For LiveTV, retry immediately (no delay) - exponential backoff is too slow
-        const delay = 0;
-        console.warn(`[LiveTV] Network error, retry ${liveTvRetryCount}/${LIVE_TV_MAX_RETRIES} immediately:`, d.details);
-        const bustSrc = `${src}&bust=1`;
-        setTimeout(() => {
-          if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-          hlsInstance = new Hls({ enableWorker: true });
-          hlsInstance.loadSource(bustSrc);
-          hlsInstance.attachMedia(video);
-          hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
-          hlsInstance.on(Hls.Events.ERROR, (__, d2) => {
-            if (!d2.fatal) return;
-            // Retries exhausted — the DVR ratingKey is dead.
-            // Host requests a retune; guests wait for the rebroadcast.
-            if (isHost) {
-              noMovieText.textContent = 'Reconnecting to channel…';
-              noMovie.style.display = 'block';
-              video.style.display = 'none';
-              currentKey = null;
-              socket.emit('retune-livetv');
-            } else {
-              noMovieText.textContent = 'Stream interrupted — reconnecting…';
-              noMovie.style.display = 'block';
-              video.style.display = 'none';
-              currentKey = null;
-            }
-          });
-        }, delay);
-      } else {
-        console.error('[LiveTV] Fatal:', d.type, d.details);
-        if (isHost) {
-          noMovieText.textContent = 'Reconnecting to channel…';
-          noMovie.style.display = 'block';
-          video.style.display = 'none';
-          currentKey = null;
-          socket.emit('retune-livetv');
-        } else {
-          noMovieText.textContent = 'Stream interrupted — reconnecting…';
-          noMovie.style.display = 'block';
-          video.style.display = 'none';
-          currentKey = null;
-        }
-      }
-    });
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = src;
-    tryPlay();
-  }
-}
-
 
 function applyLiveTvState(state) {
   document.getElementById('yt-player-container').style.display = 'none';
