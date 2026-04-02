@@ -174,35 +174,27 @@ function formatEpisodeTitle(showTitle, ep) {
 // ── Live TV retune — restarts the server-side relay with a fresh Plex session ──
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
-  if (room.retuning) return;
+  if (room.retuning) return; // prevent concurrent retunes (e.g. proactive + stall firing together)
   room.retuning = true;
   const liveTvManager = require('./livetv-manager');
   try {
     const oldSubKey = room.liveTvSubKey;
     clearRoomManifest(room.id);
 
-    // Call tuneChannel to get a fresh session + grabberId
+    // Retune by restarting relay - the start.m3u8 request will create a new Plex session automatically
     const clientId = 'movienight-app';
-    const { ratingKey, subKey, sessionKey, grabberId } = await liveTvManager.tuneChannel(room.liveTvChannelId, clientId);
-    room.liveTvSubKey = subKey;
-    room.movieKey = String(ratingKey);
-    room.playing = true;
-    room.position = 0;
-    room.lastUpdate = Date.now();
+    const ratingKey = room.movieKey;
 
-    // Warm-swap relay
-    await startRelay(room.id, { 
-      ratingKey: String(ratingKey), 
-      liveSessionKey: sessionKey, 
-      grabberId,
-      clientId, 
-      onStall: null // No retune - DVR session should be indefinite
-    });
+    // Warm-swap: new relay buffers alongside the still-valid old relay.
+    // Clients never see a 503 gap.
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: null, clientId, onStall: () => doRetune(room, io) });
 
+    // Old subscription stopped AFTER swap — old relay had a live session right
+    // up until the moment it was replaced.
     if (oldSubKey) liveTvManager.stopSubscription(oldSubKey).catch(() => {});
 
     room.broadcastState(io);
-    console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey}, grabber ${grabberId})`);
+    console.log(`[Room] "${room.name}" → Retuned ${room.liveTvChannel} → ratingKey=${ratingKey} (sub ${subKey})`);
   } catch (err) {
     console.error(`[Room] Retune failed for ${room.liveTvChannel}:`, err.message);
   } finally {
@@ -453,7 +445,7 @@ function setupSync(io, enabledRoomTypes) {
       clearRoomManifest(room.id);
       try {
         const liveTvManager = require('./livetv-manager');
-        const { ratingKey, subKey, sessionKey, grabberId } = await liveTvManager.tuneChannel(channelId);
+        const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(channelId);
         room.liveTvChannel      = String(channel || '').slice(0, 20);
         room.liveTvChannelTitle = sanitizeText((channelTitle || channel || '').slice(0, 60));
         room.liveTvChannelId    = channelId;
@@ -465,7 +457,7 @@ function setupSync(io, enabledRoomTypes) {
 
         // Start server-side relay — continuously fetches segments from Plex so
         // the session never expires. Clients connect to /api/stream/live/:roomId/index.m3u8.
-        await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey, grabberId, onStall: null });
+        await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, onStall: () => doRetune(room, io) });
 
         room.broadcastState(io);
         console.log(`[Room] "${room.name}" → Live TV channel ${room.liveTvChannel} (ratingKey=${ratingKey}, sub ${subKey})`);
