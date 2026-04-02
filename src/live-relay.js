@@ -72,15 +72,8 @@ class LiveRelay {
     console.log(`[Relay] ${this.roomId}: started (ratingKey=${this.ratingKey})`);
     this._poll();
     this._startKeepalive();
-    // Proactively retune before the DVR session expires (~4 min TTL)
-    if (this.onStall) {
-      this.proactiveTimer = setTimeout(() => {
-        if (this.running) {
-          console.log(`[Relay] ${this.roomId}: proactive retune at ${Math.round((Date.now() - this.startMs) / 1000)}s`);
-          this.onStall();
-        }
-      }, PROACTIVE_RETUNE_MS);
-    }
+    // Disabled proactive retune - it causes 400 errors from Plex
+    // The keepalive + polling should keep the session alive
   }
 
   // Build start.m3u8 URL with all required Plex params

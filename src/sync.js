@@ -174,23 +174,25 @@ function formatEpisodeTitle(showTitle, ep) {
 // ── Live TV retune — restarts the server-side relay with a fresh Plex session ──
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
-  if (room.retuning) return; // prevent concurrent retunes (e.g. proactive + stall firing together)
+  if (room.retuning) return;
   room.retuning = true;
   const liveTvManager = require('./livetv-manager');
   try {
     const oldSubKey = room.liveTvSubKey;
     clearRoomManifest(room.id);
 
-    // Retune by restarting relay - the start.m3u8 request will create a new Plex session automatically
+    // Call tuneChannel to get a fresh session - this is required
     const clientId = 'movienight-app';
-    const ratingKey = room.movieKey;
+    const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId, clientId);
+    room.liveTvSubKey = subKey;
+    room.movieKey = String(ratingKey);
+    room.playing = true;
+    room.position = 0;
+    room.lastUpdate = Date.now();
 
-    // Warm-swap: new relay buffers alongside the still-valid old relay.
-    // Clients never see a 503 gap.
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: null, clientId, onStall: () => doRetune(room, io) });
+    // Start relay - onStall is null to disable retunes since they fail with 400
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId, onStall: null });
 
-    // Old subscription stopped AFTER swap — old relay had a live session right
-    // up until the moment it was replaced.
     if (oldSubKey) liveTvManager.stopSubscription(oldSubKey).catch(() => {});
 
     room.broadcastState(io);
