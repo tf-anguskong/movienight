@@ -183,6 +183,29 @@ class LiveRelay {
     }, KEEPALIVE_MS);
   }
 
+  // ── Switch to a different channel ───────────────────────────
+  // Called when user changes channels. Keeps same Plex session IDs so
+  // we maintain a single persistent connection to Plex.
+  async switchChannel(newRatingKey, newLiveSessionKey, newOnStall) {
+    if (!this.running) throw new Error('Relay not running');
+    const oldRatingKey = this.ratingKey;
+    this.ratingKey = String(newRatingKey);
+    this.liveSessionKey = newLiveSessionKey || null;
+    if (newOnStall !== undefined) this.onStall = newOnStall;
+    this.segments.clear();
+    this.order = [];
+    this.seen.clear();
+    this.sequence = 0;
+    this.consecErrors = 0;
+    this.startMs = Date.now();
+    // Fetch new variant playlist
+    const masterUrl = this._buildMasterUrl();
+    const masterText = await this._fetchText(masterUrl);
+    const baseDir = `${PLEX_BASE_URL}/video/:/transcode/universal/`;
+    this.variantUrl = this._pickVariant(masterText, baseDir);
+    console.log(`[Relay] ${this.roomId}: switched channel ${oldRatingKey} → ${this.ratingKey}`);
+  }
+
   // ── Public accessors ───────────────────────────────────────
   /** True once enough segments are buffered to start playback without gaps. */
   isReady() {
@@ -303,14 +326,28 @@ class LiveRelay {
 const relays = new Map(); // roomId → LiveRelay
 
 /**
- * Start (or restart) the relay for a room.
+ * Start (or switch channel on) the relay for a room.
  *
- * If an existing relay is running, it keeps serving clients while the new relay
- * warms up in the background. Once the new relay has READY_SEGS buffered, the
- * relays are swapped atomically — clients never see a 503 gap.
+ * If an existing relay is running, we call switchChannel() to reuse the same
+ * Plex session IDs, maintaining a single persistent connection.
  */
 async function startRelay(roomId, opts) {
   const existing = relays.get(roomId);
+  
+  if (existing) {
+    // Reuse existing relay - same Plex session, new channel
+    await existing.switchChannel(opts.ratingKey, opts.liveSessionKey, opts.onStall);
+    // Wait for segments to buffer
+    await new Promise(resolve => {
+      const t = setInterval(() => {
+        if (existing.isReady()) { clearInterval(t); resolve(); }
+      }, 200);
+      setTimeout(() => { clearInterval(t); resolve(); }, 10000);
+    });
+    console.log(`[Relay] ${roomId}: reusing existing relay for ratingKey=${opts.ratingKey}`);
+    return existing;
+  }
+  
   const relay = new LiveRelay(roomId, opts);
 
   // Start the new relay — fetches master playlist and begins segment polling.

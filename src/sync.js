@@ -171,7 +171,7 @@ function formatEpisodeTitle(showTitle, ep) {
   return `${showTitle ? showTitle + ' · ' : ''}${se}${ep.title || ''}`;
 }
 
-// ── Live TV retune — restarts the server-side relay with a fresh Plex session ──
+// ── Live TV retune — gets fresh Plex session while reusing existing relay ──
 async function doRetune(room, io) {
   if (!room.liveTvChannelId) return;
   if (room.retuning) return;
@@ -179,19 +179,21 @@ async function doRetune(room, io) {
   const liveTvManager = require('./livetv-manager');
   try {
     const oldSubKey = room.liveTvSubKey;
-    clearRoomManifest(room.id);
 
-    // Call tuneChannel to get a fresh session - this is required
+    // Get fresh session from Plex
     const clientId = 'movienight-app';
     const { ratingKey, subKey, sessionKey } = await liveTvManager.tuneChannel(room.liveTvChannelId, clientId);
     room.liveTvSubKey = subKey;
     room.movieKey = String(ratingKey);
-    room.playing = true;
-    room.position = 0;
-    room.lastUpdate = Date.now();
 
-    // Start relay - onStall is null to disable retunes since they fail with 400
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId, onStall: null });
+    // Switch channel on existing relay - reuses same Plex session IDs for persistent stream
+    const relay = require('./live-relay').getRelay(room.id);
+    if (relay) {
+      await relay.switchChannel(String(ratingKey), sessionKey || null, () => doRetune(room, io));
+    } else {
+      // No existing relay - start fresh (shouldn't happen in normal flow)
+      await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey || null, clientId, onStall: () => doRetune(room, io) });
+    }
 
     if (oldSubKey) liveTvManager.stopSubscription(oldSubKey).catch(() => {});
 
