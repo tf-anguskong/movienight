@@ -51,7 +51,6 @@ class LiveRelay {
     this.segments   = new Map();   // segmentName → Buffer
     this.order      = [];          // segment names in current window (oldest first)
     this.sequence   = 0;           // EXT-X-MEDIA-SEQUENCE for current window start
-    this.seen       = new Set();   // all segment names ever fetched (dedup)
     this.targetDur  = 3;           // EXT-X-TARGETDURATION (updated from playlist)
     this.running        = false;
     this.pollTimer      = null;
@@ -132,8 +131,9 @@ class LiveRelay {
     const segs = this._parseSegs(text, this.variantUrl);
 
     for (const { name, url } of segs) {
-      if (this.seen.has(name)) continue;
-      this.seen.add(name);
+      // Only fetch if not already in buffer - don't use seen set since Plex
+      // reuses segment names in its rolling window
+      if (this.segments.has(name)) continue;
       try {
         const buf = await this._fetchBin(url);
         this.segments.set(name, buf);
@@ -194,7 +194,6 @@ class LiveRelay {
     if (newOnStall !== undefined) this.onStall = newOnStall;
     this.segments.clear();
     this.order = [];
-    this.seen.clear();
     this.sequence = 0;
     this.consecErrors = 0;
     this.startMs = Date.now();
