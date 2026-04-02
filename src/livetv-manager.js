@@ -119,24 +119,21 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
   const headers = buildHeaders();
   if (!cachedDvrKey) await fetchDvrInfo(headers);
 
+  const grabberId = `p${Date.now().toString(36)}`;
   const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
-  console.log(`[LiveTV] tuneChannel URL: ${url} clientId: ${clientId}`);
+  console.log(`[LiveTV] tuneChannel URL: ${url} clientId: ${clientId} grabberId: ${grabberId}`);
   let data;
-  let grabberId;
   try {
     const res = await axios.post(url, null, {
       headers,
-      params: { 'X-Plex-Client-Identifier': clientId },
+      params: { 
+        'X-Plex-Client-Identifier': clientId,
+        'X-Plex-Session-Identifier': grabberId,
+      },
       timeout: 15000,
     });
     data = res.data;
-    const sub = data?.MediaContainer?.MediaSubscription?.[0];
-    const grabOp = sub?.MediaGrabOperation?.[0];
-    if (grabOp?.id) {
-      const parts = grabOp.id.split('-');
-      grabberId = parts.length > 1 ? parts[parts.length - 1] : grabOp.id;
-    }
-    console.log(`[LiveTV] tuneChannel grabberId from response: ${grabberId} (op.id=${grabOp?.id})`);
+    console.log(`[LiveTV] tuneChannel sent grabberId: ${grabberId}`);
   } catch (err) {
     console.error(`[LiveTV] tuneChannel failed: ${err.response?.status} ${err.response?.data || err.message}`);
     throw err;
@@ -151,18 +148,16 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
     await new Promise(r => setTimeout(r, 2000));
     const retry = await axios.post(url, null, {
       headers,
-      params: { 'X-Plex-Client-Identifier': clientId },
+      params: { 
+        'X-Plex-Client-Identifier': clientId,
+        'X-Plex-Session-Identifier': grabberId,
+      },
       timeout: 15000,
     });
     const sub2 = retry.data?.MediaContainer?.MediaSubscription?.[0];
-    const grabOp2 = sub2?.MediaGrabOperation?.[0];
-    const meta2 = grabOp2?.Metadata;
+    const meta2 = sub2?.MediaGrabOperation?.[0]?.Metadata;
     if (!meta2?.ratingKey) {
       throw new Error('Tune response missing ratingKey (after retry)');
-    }
-    if (!grabberId && grabOp2?.id) {
-      const parts = grabOp2.id.split('-');
-      grabberId = parts.length > 1 ? parts[parts.length - 1] : grabOp2.id;
     }
     console.log(`[LiveTV] Retuned channel ${channelId} → ratingKey ${meta2.ratingKey} (sub ${sub2.key})`);
     return { ratingKey: String(meta2.ratingKey), subKey: sub2.key, sessionKey: meta2.key, grabberId };
