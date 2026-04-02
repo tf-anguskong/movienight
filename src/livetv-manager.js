@@ -122,6 +122,7 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
   const url = `${PLEX_HOST}/livetv/dvrs/${cachedDvrKey}/channels/${channelId}/tune`;
   console.log(`[LiveTV] tuneChannel URL: ${url} clientId: ${clientId}`);
   let data;
+  let grabberId;
   try {
     const res = await axios.post(url, null, {
       headers,
@@ -129,16 +130,17 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
       timeout: 15000,
     });
     data = res.data;
+    grabberId = res.headers['x-plex-session-identifier'];
+    console.log(`[LiveTV] tuneChannel grabberId from header: ${grabberId}`);
   } catch (err) {
     console.error(`[LiveTV] tuneChannel failed: ${err.response?.status} ${err.response?.data || err.message}`);
     throw err;
   }
 
-  // The tune response nests metadata under MediaSubscription[0].MediaGrabOperation[0].Metadata
   const sub  = data?.MediaContainer?.MediaSubscription?.[0];
-  const meta = sub?.MediaGrabOperation?.[0]?.Metadata;
+  const grabOp = sub?.MediaGrabOperation?.[0];
+  const meta = grabOp?.Metadata;
 
-  // If no ratingKey, wait and retry once (Plex may be slow to provision)
   if (!meta?.ratingKey) {
     console.log(`[LiveTV] Tune response missing ratingKey, waiting and retrying...`);
     await new Promise(r => setTimeout(r, 2000));
@@ -148,18 +150,21 @@ async function tuneChannel(channelId, clientId = CLIENT_ID) {
       timeout: 15000,
     });
     const sub2 = retry.data?.MediaContainer?.MediaSubscription?.[0];
-    const meta2 = sub2?.MediaGrabOperation?.[0]?.Metadata;
+    const grabOp2 = sub2?.MediaGrabOperation?.[0];
+    const meta2 = grabOp2?.Metadata;
     if (!meta2?.ratingKey) {
       throw new Error('Tune response missing ratingKey (after retry)');
     }
+    const grabberId2 = retry.headers['x-plex-session-identifier'] || (grabOp2?.id?.split('-').pop());
     console.log(`[LiveTV] Retuned channel ${channelId} → ratingKey ${meta2.ratingKey} (sub ${sub2.key})`);
-    return { ratingKey: String(meta2.ratingKey), subKey: sub2.key };
+    return { ratingKey: String(meta2.ratingKey), subKey: sub2.key, sessionKey: meta2.key, grabberId: grabberId2 };
   }
 
-  // meta.key is '/livetv/sessions/{uuid}' — needed as the 'key' param in /:/timeline
-  // so Plex correctly associates keepalive pings with this live session.
-  console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey} (sub ${sub.key})`);
-  return { ratingKey: String(meta.ratingKey), subKey: sub.key, sessionKey: meta.key };
+  if (!grabberId && grabOp?.id) {
+    grabberId = grabberId || grabOp.id.split('-').pop();
+  }
+  console.log(`[LiveTV] Tuned channel ${channelId} → ratingKey ${meta.ratingKey} (sub ${sub.key}, grabber ${grabberId})`);
+  return { ratingKey: String(meta.ratingKey), subKey: sub.key, sessionKey: meta.key, grabberId };
 }
 
 async function getGuide() {
