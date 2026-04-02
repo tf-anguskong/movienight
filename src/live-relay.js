@@ -51,6 +51,7 @@ class LiveRelay {
     this.segments   = new Map();   // segmentName → Buffer
     this.order      = [];          // segment names in current window (oldest first)
     this.sequence   = 0;           // EXT-X-MEDIA-SEQUENCE for current window start
+    this.maxSeqSeen = -1;          // highest segment number we've fetched in this session
     this.targetDur  = 3;           // EXT-X-TARGETDURATION (updated from playlist)
     this.running        = false;
     this.pollTimer      = null;
@@ -130,9 +131,11 @@ class LiveRelay {
     const text = await this._fetchText(this.variantUrl);
     const segs = this._parseSegs(text, this.variantUrl);
 
-    for (const { name, url } of segs) {
-      // Only fetch if not already in buffer - don't use seen set since Plex
-      // reuses segment names in its rolling window
+    for (const { name, url, seqNum } of segs) {
+      // Only fetch segments at or after our current sequence - skip old ones
+      // that are still in the playlist from before a wrap
+      if (seqNum < this.sequence) continue;
+      // Skip if already in buffer
       if (this.segments.has(name)) continue;
       try {
         const buf = await this._fetchBin(url);
@@ -195,6 +198,7 @@ class LiveRelay {
     this.segments.clear();
     this.order = [];
     this.sequence = 0;
+    this.maxSeqSeen = -1;
     this.consecErrors = 0;
     this.startMs = Date.now();
     // Fetch new variant playlist
@@ -303,10 +307,13 @@ class LiveRelay {
         // Strip query string for dedup key (tokens may vary); use path only
         const stripped = t.split('?')[0];
         const rawName  = stripped.split('/').pop();
+        // Extract sequence number from segment name (e.g., "00001.ts" -> 1)
+        const seqMatch = rawName.match(/(\d+)\.ts$/);
+        const seqNum   = seqMatch ? parseInt(seqMatch[1], 10) : 0;
         // Prefix with unique ID to avoid segment name collisions across retunes
         const name     = `${this.segPrefix}-${rawName}`;
         const url      = this._resolve(stripped, dirUrl);
-        out.push({ name, url });
+        out.push({ name, url, seqNum });
       } else if (t && !t.startsWith('#')) {
         extinf = false;
       }
