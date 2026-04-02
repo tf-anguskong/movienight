@@ -181,15 +181,13 @@ async function doRetune(room, io) {
     const oldSubKey = room.liveTvSubKey;
     clearRoomManifest(room.id);
 
-    // Skip tuneChannel on retune - just restart the relay to get fresh segments from the existing session
-    // The old relay's Plex session should still be valid until we swap
+    // Retune by restarting relay - the start.m3u8 request will create a new Plex session automatically
     const clientId = 'movienight-app';
     const ratingKey = room.movieKey;
-    const sessionKey = null; // don't change the session
 
     // Warm-swap: new relay buffers alongside the still-valid old relay.
     // Clients never see a 503 gap.
-    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: sessionKey, clientId, onStall: () => doRetune(room, io) });
+    await startRelay(room.id, { ratingKey: String(ratingKey), liveSessionKey: null, clientId, onStall: () => doRetune(room, io) });
 
     // Old subscription stopped AFTER swap — old relay had a live session right
     // up until the moment it was replaced.
