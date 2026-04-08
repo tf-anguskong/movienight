@@ -415,8 +415,13 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
   // because the old session has expired (~3-4 min for LiveTV)
   if (bust && isLive) {
     const channelId = livetvChannelIds.get(roomId);
-    if (channelId) {
-      console.log(`[HLS] LiveTV bust - retuning to channel ${channelId}`);
+    if (!channelId) {
+      // Channel ID not found - likely server restart or stale state.
+      // Return 410 Gone to tell client to re-select the channel.
+      console.log(`[HLS] LiveTV bust but no channelId for room ${roomId} — session expired, client must re-select channel`);
+      return res.status(410).json({ error: 'LiveTV session expired', code: 'SESSION_EXPIRED' });
+    }
+    console.log(`[HLS] LiveTV bust - retuning to channel ${channelId}`);
       // Delete old subscription first to force a fresh session
       // Get subKey from our map (set by prewarmManifest or select-livetv-channel)
       const oldSubKey = livetvSubKeys.get(roomId);
@@ -442,7 +447,6 @@ router.get('/hls/:roomId/:ratingKey/master.m3u8', async (req, res) => {
       // Register the live session path so the transcode is linked to the DVR subscription
       if (tuneResult.sessionKey) registerLiveTvSessionKey(roomId, actualRatingKey, tuneResult.sessionKey);
       console.log(`[HLS] LiveTV retuned to ratingKey=${actualRatingKey}, sub=${tuneResult.subKey}`);
-    }
   } else if (bust) {
     stopKeepalive(cacheKey);
     manifestCache.delete(cacheKey);
@@ -537,8 +541,13 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
   // because the old session has expired (~3-4 min for LiveTV)
   if (bust) {
     const channelId = livetvChannelIds.get(roomId);
-    if (channelId) {
-      console.log(`[DASH] LiveTV bust - retuning to channel ${channelId}`);
+    if (!channelId) {
+      // Channel ID not found - likely server restart or stale state.
+      // Return 410 Gone to tell client to re-select the channel.
+      console.log(`[DASH] LiveTV bust but no channelId for room ${roomId} — session expired, client must re-select channel`);
+      return res.status(410).json({ error: 'LiveTV session expired', code: 'SESSION_EXPIRED' });
+    }
+    console.log(`[DASH] LiveTV bust - retuning to channel ${channelId}`);
       // Delete old subscription first to force a fresh session
       const oldSubKey = livetvSubKeys.get(roomId);
       if (oldSubKey) {
@@ -563,7 +572,6 @@ router.get('/dash/:roomId/:ratingKey/manifest.mpd', async (req, res) => {
       // Register the live session path so the transcode is linked to the DVR subscription
       if (tuneResult.sessionKey) registerLiveTvSessionKey(roomId, actualRatingKey, tuneResult.sessionKey);
       console.log(`[DASH] LiveTV retuned to ratingKey=${actualRatingKey}, sub=${tuneResult.subKey}`);
-    }
   }
 
   res.setHeader('Content-Type', 'application/dash+xml');
